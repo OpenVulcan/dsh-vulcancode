@@ -16,9 +16,9 @@ export interface PinnedPackage {
 export const SDK_PACKAGES: readonly PinnedPackage[] = [
   {
     name: '@luaskills/sdk',
-    version: '0.6.6',
-    tarball: 'https://registry.npmjs.org/@luaskills/sdk/-/sdk-0.6.6.tgz',
-    integrity: 'sha512-QFRjVFxjblE9+3c8D9zAVHVWb1mtkqsG1OkaT4Nyjgk/bsaaGK1AYZMnAGlfV6qZbrHB5ffzintTUkE+b/AfBg==',
+    version: '0.6.7',
+    tarball: 'https://registry.npmjs.org/@luaskills/sdk/-/sdk-0.6.7.tgz',
+    integrity: 'sha512-1yEvpMiPiEDDZK3/z1Deq3Hq7fb/SBaznObFjareUyBWoWCurT5jSHpzgex3ioyHnB3i6mXkrfvpukcEoN866Q==',
   },
   {
     name: 'koffi',
@@ -31,7 +31,7 @@ export const SDK_PACKAGES: readonly PinnedPackage[] = [
 /** The SDK package the engine imports. */
 export const SDK_PACKAGE = SDK_PACKAGES[0]!
 
-/** LuaSkills core (JSON FFI) release; also the SDK 0.6.6 default. */
+/** LuaSkills core (JSON FFI) release; also the SDK 0.6.7 default. */
 export const LUASKILLS_VERSION = 'v0.7.2'
 
 /**
