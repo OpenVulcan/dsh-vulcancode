@@ -1,28 +1,28 @@
 /**
- * The LuaSkills worker thread. The SDK calls LuaSkills synchronously through FFI, so it lives
- * here instead of on dsh's event loop. The SDK is imported from the runtime directory it was
- * installed into; nothing in dsh's own dependency tree provides it.
+ * The LuaSkills worker process. The SDK calls LuaSkills synchronously through FFI, so it lives
+ * here instead of on dsh's event loop, and in its own process so ending it unloads the core
+ * library (see `engine.ts`). The SDK is imported from the runtime directory it was installed
+ * into, named by the first argument as a `file:` URL; nothing in dsh's dependency tree provides it.
  *
  * Messages in: `{ id, method, params }`. Messages out: `{ id, ok, value | error }` answers and
  * `{ event: 'download', role, received, total }` while runtime archives download.
  */
 
-import { parentPort, workerData } from 'node:worker_threads'
-
-import type { WorkerData, WorkerEvent, WorkerReply, WorkerRequest } from './protocol.js'
+import type { WorkerEvent, WorkerReply, WorkerRequest } from './protocol.js'
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- the SDK is loaded at run time and has no types here. */
 type Sdk = any
 type Client = any
 
-const port = parentPort!
-const data = workerData as WorkerData
-const sdk: Sdk = await import(data.sdkEntry)
+if (process.send === undefined) throw new Error('the LuaSkills worker must be started by the plugin')
+// Without dsh there is nobody to answer; never linger as an orphan.
+process.on('disconnect', () => { process.exit(0) })
+const sdk: Sdk = await import(process.argv[2]!)
 
 let client: Client | undefined
 let roots: { name: string; skills_dir: string }[] = []
 
-const post = (message: WorkerReply | WorkerEvent): void => { port.postMessage(message) }
+const post = (message: WorkerReply | WorkerEvent): void => { process.send!(message) }
 
 /** Report download bytes of the runtime archives, which the SDK fetches with the global `fetch`. */
 function countDownloads(assets: Map<string, string>): () => void {
@@ -131,7 +131,7 @@ const handlers: Record<string, (params: any) => unknown> = {
   },
 }
 
-port.on('message', (request: WorkerRequest) => {
+process.on('message', (request: WorkerRequest) => {
   void (async () => {
     try {
       const handler = handlers[request.method]

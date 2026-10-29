@@ -11,7 +11,8 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs'
-import { rm, writeFile } from 'node:fs/promises'
+import { readdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 
 import {
@@ -32,8 +33,8 @@ export interface Versions {
 /** The versions this plugin installs. */
 export const PINNED: Versions = { sdk: SDK_PACKAGE.version, luaskills: LUASKILLS_VERSION, luaRuntime: LUA_RUNTIME_VERSION }
 
-/** Install steps, in order. */
-export const PHASES = ['sdk', 'core', 'lua', 'engine', 'skill'] as const
+/** Install steps, in the order the SDK fetches the runtime archives. */
+export const PHASES = ['sdk', 'lua', 'core', 'engine', 'skill'] as const
 export type Phase = (typeof PHASES)[number]
 
 export type RuntimeState =
@@ -244,6 +245,7 @@ export class LuaSkillsRuntime {
     const progress = (phase: Phase, received = 0, total: number | null = null) => {
       this.set({ kind: 'installing', phase, received, total })
     }
+    const started = Date.now()
     try {
       progress('sdk')
       await this.stopWorker()
@@ -253,7 +255,7 @@ export class LuaSkillsRuntime {
       })
       signal.throwIfAborted()
 
-      progress('core')
+      progress('lua')
       const worker = this.spawn()
       worker.onDownload = (role, received, total) => {
         throttled(() => { progress(role === 'lua_runtime' ? 'lua' : 'core', received, total) }, received === total || received === 0)
@@ -279,8 +281,22 @@ export class LuaSkillsRuntime {
       this.worker = undefined
       await worker?.kill()
       await this.wipe().catch(() => {})
+      if (worker?.pid !== undefined) await removeSdkScratch(worker.pid, started).catch(() => {})
       if (signal.aborted) this.set({ kind: 'absent' })
       else this.set({ kind: 'failed', error: messageOf(error), installed: false })
+    }
+  }
+}
+
+/**
+ * The SDK unpacks runtime archives in `<tmpdir>/luaskills-runtime-assets-<pid>-<ms>` and removes it
+ * itself, unless the worker is stopped first; remove the ones this install left behind.
+ */
+async function removeSdkScratch(pid: number, since: number): Promise<void> {
+  const prefix = `luaskills-runtime-assets-${pid}-`
+  for (const name of await readdir(tmpdir())) {
+    if (name.startsWith(prefix) && Number(name.slice(prefix.length)) >= since) {
+      await rm(path.join(tmpdir(), name), { recursive: true, force: true, maxRetries: 3 })
     }
   }
 }

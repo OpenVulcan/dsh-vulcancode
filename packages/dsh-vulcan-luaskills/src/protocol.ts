@@ -1,9 +1,4 @@
-/** Messages between the Host plugin and its LuaSkills worker thread. */
-
-export interface WorkerData {
-  /** `file:` URL of the SDK's entry module inside the runtime directory. */
-  readonly sdkEntry: string
-}
+/** Messages between the Host plugin and its LuaSkills worker process. */
 
 export interface WorkerRequest {
   readonly id: number

@@ -1,6 +1,6 @@
 /** The runtime section: install prompt, install progress, status, restart and removal. */
 
-import { useEffect, useState, useSyncExternalStore } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 
 import { fill, type Key, type Translate } from './i18n'
 import { callHost, HostWatch, messageOf, PHASES, type RuntimeView, type Versions } from './shared'
@@ -34,6 +34,14 @@ export function RuntimeSection({ view, live, t }: { view: HostWatch<RuntimeView 
     if (window.confirm(t('runtime.removeConfirm'))) act(() => callHost('POST', 'remove'))
   }
   const state = live.state
+  const now = Date.now()
+  // When this page first saw the current archive fully downloaded; the SDK then verifies and
+  // unpacks it with no progress of its own, so the time since is shown instead.
+  const downloaded = state.kind === 'installing' && state.total !== null && state.received >= state.total ? state.phase : undefined
+  const unpackedFrom = useRef<{ phase: string; at: number } | undefined>(undefined)
+  if (downloaded === undefined) unpackedFrom.current = undefined
+  else if (unpackedFrom.current?.phase !== downloaded) unpackedFrom.current = { phase: downloaded, at: now }
+  const unpackingSince = unpackedFrom.current?.at
 
   let body
   switch (state.kind) {
@@ -50,13 +58,17 @@ export function RuntimeSection({ view, live, t }: { view: HostWatch<RuntimeView 
       break
     case 'installing': {
       const index = PHASES.indexOf(state.phase)
-      const share = state.total !== null && state.total > 0 ? Math.min(1, state.received / state.total) : null
+      const unpacking = unpackingSince !== undefined
+      const share = !unpacking && state.total !== null && state.total > 0 ? Math.min(1, state.received / state.total) : null
       body = (
         <div className="vls-progress">
           <div className="vac-between">
             <span className="vac-inline">
               <span className="vac-badge info">{fill(t('runtime.step'), { index: index + 1, count: PHASES.length })}</span>
               <strong>{t(`runtime.phase.${state.phase}` as Key)}</strong>
+              {unpacking ? (
+                <span className="vac-hint">{fill(t('runtime.unpacking'), { seconds: Math.max(0, Math.floor((now - unpackingSince) / 1000)) })}</span>
+              ) : null}
             </span>
             <span className="vac-inline">
               {state.received > 0 ? (
@@ -72,6 +84,7 @@ export function RuntimeSection({ view, live, t }: { view: HostWatch<RuntimeView 
           <div className="vls-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={share === null ? undefined : Math.round(share * 100)}>
             <span className={share === null ? 'vls-bar-fill indeterminate' : 'vls-bar-fill'} style={share === null ? undefined : { width: `${share * 100}%` }} />
           </div>
+          {unpacking && state.phase === 'core' ? <p className="vac-hint">{t('runtime.unpackingSlow')}</p> : null}
           <ol className="vls-steps">
             {PHASES.map((phase, at) => (
               <li key={phase} className={at < index ? 'done' : at === index ? 'now' : ''}>{t(`runtime.phase.${phase}` as Key)}</li>

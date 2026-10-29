@@ -1,25 +1,31 @@
 /**
  * The Host side of the LuaSkills worker: one request at a time per call site, answered by id.
  * The worker owns every SDK call; when it exits, every pending request fails with the reason.
+ *
+ * The worker is a child process, not a thread: the LuaSkills core library it loads stays mapped
+ * until its process ends, and Windows refuses to delete a mapped library, so only a process lets
+ * the runtime be removed or reinstalled while dsh runs. A native crash also stays in the child.
  */
 
-import { pathToFileURL } from 'node:url'
-import { Worker } from 'node:worker_threads'
+import { fork, type ChildProcess } from 'node:child_process'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import type {
-  ApplyResult, EntryDescriptor, HelpDetail, InvocationResult, SkillHelp, WorkerData, WorkerEvent, WorkerReply,
+  ApplyResult, EntryDescriptor, HelpDetail, InvocationResult, SkillHelp, WorkerEvent, WorkerReply,
 } from './protocol.js'
 
 export type DownloadListener = (role: string, received: number, total: number | null) => void
 
 export class LuaSkillsWorker {
-  private readonly worker: Worker
+  private readonly worker: ChildProcess
   private readonly pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>()
   private next = 0
   private exitError: Error | undefined
   /** Set once the Host asked the worker to stop; its exit is then not a crash. */
   private stopping = false
   private readonly started: Promise<void>
+  /** Settles once the worker process has ended and released the core library. */
+  private readonly exited: Promise<void>
   /** Set while a runtime install reports its downloads. */
   onDownload: DownloadListener | undefined
 
@@ -28,12 +34,23 @@ export class LuaSkillsWorker {
    * @param onExit - called once if the worker stops without being asked to.
    */
   constructor(sdkEntry: string, private readonly onExit: (error: Error) => void) {
-    const data: WorkerData = { sdkEntry: pathToFileURL(sdkEntry).href }
-    this.worker = new Worker(new URL('./worker.js', import.meta.url), { workerData: data })
+    this.worker = fork(fileURLToPath(new URL('./worker.js', import.meta.url)), [pathToFileURL(sdkEntry).href], {
+      // Inspector or loader flags of dsh's own process do not apply to the worker; under Electron
+      // the executable runs as plain Node.js.
+      execArgv: [],
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      serialization: 'advanced',
+      stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
+    })
     let ready: () => void
     let failed: (error: Error) => void
     this.started = new Promise<void>((resolve, reject) => { ready = resolve; failed = reject })
     this.started.catch(() => {})
+    this.exited = new Promise<void>((resolve) => {
+      this.worker.once('exit', () => { resolve() })
+      // A process that never started has no exit to wait for.
+      this.worker.once('error', () => { if (this.worker.pid === undefined) resolve() })
+    })
     this.worker.on('message', (message: WorkerReply | WorkerEvent) => {
       if ('event' in message) {
         if (message.event === 'ready') ready()
@@ -51,8 +68,8 @@ export class LuaSkillsWorker {
       failed(error)
       this.fail(error)
     })
-    this.worker.on('exit', (code) => {
-      const error = new Error(`the LuaSkills worker stopped (exit code ${code})`)
+    this.worker.on('exit', (code, signal) => {
+      const error = new Error(`the LuaSkills worker stopped (${signal === null ? `exit code ${code}` : signal})`)
       failed(error)
       this.fail(error)
     })
@@ -73,7 +90,7 @@ export class LuaSkillsWorker {
     const id = ++this.next
     return await new Promise<T>((resolve, reject) => {
       this.pending.set(id, { resolve: resolve as (value: unknown) => void, reject })
-      this.worker.postMessage({ id, method, params })
+      this.worker.send({ id, method, params })
     })
   }
 
@@ -117,20 +134,26 @@ export class LuaSkillsWorker {
     return this.request('setEnabled', { skillId, enabled })
   }
 
-  /** Close the engine, then the thread; nothing is reported as a crash. */
+  /** The worker's process id; the SDK names its scratch folders after it. */
+  get pid(): number | undefined {
+    return this.worker.pid
+  }
+
+  /** Close the engine, then the process; nothing is reported as a crash. */
   async stop(): Promise<void> {
     this.stopping = true
-    // A call still running holds the engine; it gets a few seconds before the thread is ended.
+    // A call still running holds the engine; it gets a few seconds before the process is ended.
     await Promise.race([
       this.request('stop', null, true),
       new Promise(resolve => setTimeout(resolve, 5000)),
     ]).catch(() => {})
-    await this.worker.terminate()
+    await this.kill()
   }
 
-  /** Stop at once, abandoning whatever the worker is doing. */
+  /** Stop at once, abandoning whatever the worker is doing; resolves once the process is gone. */
   async kill(): Promise<void> {
     this.stopping = true
-    await this.worker.terminate()
+    if (this.worker.exitCode === null && this.worker.signalCode === null) this.worker.kill()
+    await this.exited
   }
 }

@@ -10,7 +10,7 @@ export const PANEL_ID = 'vulcan-luaskills'
 const ROUTE_BASE = '/api/vulcan-luaskills/'
 
 /** Mirrors `PHASES` in `src/runtime.ts`. */
-export const PHASES = ['sdk', 'core', 'lua', 'engine', 'skill'] as const
+export const PHASES = ['sdk', 'lua', 'core', 'engine', 'skill'] as const
 export type Phase = (typeof PHASES)[number]
 
 /** Mirrors `RuntimeState` in `src/runtime.ts`. */
