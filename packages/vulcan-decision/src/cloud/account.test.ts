@@ -82,3 +82,16 @@ test('signing out revokes the device and forgets the credential', async () => {
   assert.ok(mock.revoked.includes(authorization))
   assert.deepEqual(await account.status(), { signedIn: false })
 })
+
+test('reads the profile of the signed-in device and refuses another authorization', async () => {
+  const { store, account } = await signedIn()
+  assert.deepEqual(await account.profile(), { id: '10001', username: 'forge', nickname: 'Forge Tester', plan: 'pro' })
+  store.value = { ...store.value!, authorization_id: 'auth-other' }
+  await assert.rejects(account.profile(), AccountError)
+})
+
+test('sends the device the host describes when asking for approval', async () => {
+  await signedIn()
+  const device = mock.devices.at(-1)
+  assert.deepEqual([device?.['display_name'], device?.['client_version']], ['test device', 'test 0'])
+})

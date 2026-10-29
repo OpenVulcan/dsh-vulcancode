@@ -5,7 +5,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { CredentialRecord } from '@deepseek-ai/dsh-credentials'
 import { AccountError, type Credential } from '@openvulcan/openvulcan-account'
 
-import { CREDENTIAL_KEY, DshCredentialStore, handle, ROUTES, type AccountView, type OpenVulcanAccountService } from './index.js'
+import { CREDENTIAL_KEY, deviceInfo, DshCredentialStore, handle, ROUTES, type AccountView, type OpenVulcanAccountService } from './index.js'
 
 /** dsh's credential service, reduced to one in-memory record per key. */
 class Records {
@@ -58,4 +58,8 @@ test('routes check the site and report failures with their code', async () => {
   const out = await call(service, 'POST', 'signout')
   assert.deepEqual([out.status, out.answer.error?.code], [401, 'not_signed_in'])
   assert.deepEqual((await call(service, 'GET', 'state')).answer.value, { account: { signedIn: false }, signIn: null })
+})
+
+test('names the sign-in client dsh at its exact version', () => {
+  assert.deepEqual(deviceInfo('0.2.1-rc.2'), { display_name: 'dsh', client_version: '0.2.1-rc.2' })
 })

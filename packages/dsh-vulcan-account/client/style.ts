@@ -77,6 +77,40 @@ body[data-ds-dark-theme] .vac {
 .vac-mono { font-family: var(--vk-mono); }
 
 .vac-between > .vac-hint:last-child { font-variant-numeric: tabular-nums; }
+
+/* Sidebar foot row, above Settings: dsh's own sidebar colours and the Settings trigger's inset. */
+.vac-foot {
+  display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; height: 40px; margin: 4px 0 0;
+  padding: 0 calc(var(--dsh-sidebar-row-padding, 12px) - var(--dsh-sidebar-paint-inset, 3px));
+  border: none; border-inline: var(--dsh-sidebar-paint-inset, 3px) solid transparent; background: transparent; background-clip: padding-box;
+  border-radius: var(--dsw-radius-md, 0); box-sizing: border-box;
+  color: var(--dsw-alias-label-primary, #14171c); font-family: inherit; font-size: 13px; line-height: 18px; text-align: left;
+}
+button.vac-foot { cursor: pointer; }
+.vac-foot.rail { position: relative; flex: none; width: 36px; height: 36px; margin: 0; padding: 0; justify-content: center; border-inline: 0; }
+@media (hover: hover) {
+  button.vac-foot:hover, .vac-foot-home:hover { background-color: var(--dsw-alias-interactive-bg-hover, rgba(0, 0, 0, .05)); }
+}
+.vac-foot-home { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; height: 100%; margin: 0 0 0 -6px; padding: 0 6px; border: none; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; border-radius: var(--dsw-radius-sm, 0); }
+.vac-foot-mark { flex: none; width: 16px; height: 18px; }
+.vac-foot-text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.vac-foot-name, .vac-foot-sub { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.vac-foot-name { font-weight: 500; }
+.vac-foot-sub { color: var(--dsw-alias-label-tertiary, #626973); font-size: 11px; line-height: 14px; }
+.vac-foot-sub.warn { color: #c2410c; }
+.vac-foot-plan {
+  flex: none; padding: 0 5px; border: 1px solid color-mix(in srgb, #e2511a 40%, transparent); color: #e2511a;
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10px; line-height: 16px; letter-spacing: .06em; text-transform: uppercase;
+}
+.vac-foot-actions { display: flex; flex: none; gap: 4px; }
+.vac-foot-chip {
+  display: inline-flex; align-items: center; height: 22px; padding: 0 7px; border: 1px solid var(--dsw-alias-border-l2, #dde1e6);
+  background: transparent; color: var(--dsw-alias-label-secondary, #4a515c); font: inherit; font-size: 11px; text-decoration: none; cursor: pointer; white-space: nowrap;
+}
+.vac-foot-chip:hover:not(:disabled) { border-color: #e2511a; color: #e2511a; }
+.vac-foot-chip:disabled { cursor: default; opacity: .55; }
+.vac-foot-dot { position: absolute; right: 7px; bottom: 7px; width: 6px; height: 6px; border-radius: 50%; background: var(--dsw-alias-state-success-primary, #18a058); box-shadow: 0 0 0 2px var(--dsw-specific-sidebar-fill, #fff); }
+.vac-foot:focus-visible, .vac-foot-home:focus-visible, .vac-foot-chip:focus-visible { outline: 2px solid #2e58cc; outline-offset: -2px; }
 `
 
 /** Add the stylesheet once per page; returns a function that removes it again. */

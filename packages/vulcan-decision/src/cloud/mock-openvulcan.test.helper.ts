@@ -35,6 +35,8 @@ export interface MockOpenVulcan {
   /** Answer refreshes with this status instead. */
   refreshStatus: number | undefined
   readonly revoked: string[]
+  /** The `device` of every authorization request, in order. */
+  readonly devices: Record<string, string>[]
   readonly grantsIssued: () => number
   /** Approve a pending sign-in the way a browser would: follow the approval page to the callback. */
   approve(approvalUrl: string): Promise<void>
@@ -127,7 +129,7 @@ export async function startMockOpenVulcan(options: {
 
   const mock = {
     origin: '', site, model, edges, credentialLifetimeMs: 14 * 24 * 3_600_000,
-    refreshStatus: undefined as number | undefined, revoked: [] as string[],
+    refreshStatus: undefined as number | undefined, revoked: [] as string[], devices: [] as Record<string, string>[],
     grantsIssued: () => grantCount,
     async approve(approvalUrl: string) {
       const response = await fetch(approvalUrl)
@@ -156,7 +158,8 @@ export async function startMockOpenVulcan(options: {
       const url = new URL(request.url ?? '/', mock.origin)
       const route = `${request.method} ${url.pathname}`
       if (route === 'POST /api/v1/vulcancode/authorize') {
-        const payload = await body(request) as { callback_uri: string; state: string; code_challenge: string }
+        const payload = await body(request) as { callback_uri: string; state: string; code_challenge: string; device: Record<string, string> }
+        mock.devices.push(payload.device)
         const requestId = token()
         pending.set(requestId, { callback: payload.callback_uri, state: payload.state, challenge: payload.code_challenge })
         json(response, 200, {
@@ -188,6 +191,14 @@ export async function startMockOpenVulcan(options: {
         credentials.delete(request.headers.authorization!.replace(/^Auth /, ''))
         mock.revoked.push(authorization)
         json(response, 200, {})
+      } else if (route === 'GET /api/v1/vulcancode/account') {
+        const authorization = signedIn(request)
+        if (authorization === undefined) return json(response, 401, { error: 'invalid_token' })
+        json(response, 200, {
+          authorization_id: authorization,
+          user: { id: '10001', username: 'forge', nickname: 'Forge Tester' },
+          quota: { free: { tier: 'free' }, member: { tier: 'pro' } },
+        })
       } else if (route === 'GET /api/v1/vulcancode/edge-models') {
         if (signedIn(request) === undefined) return json(response, 401, { error: 'invalid_token' })
         json(response, 200, { models: [{ model_id: model }] })

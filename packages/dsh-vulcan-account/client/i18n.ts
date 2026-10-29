@@ -26,6 +26,19 @@ export const zh = {
   'account.cancel': '取消登录',
   'account.signOut': '退出登录',
   'account.failed': '登录失败：{error}',
+
+  'footer.brand': 'OpenVulcan',
+  'footer.signedOut': '未登录',
+  'footer.signedInAs': 'OpenVulcan：{name}',
+  'footer.open': '打开 OpenVulcan 账号设置',
+  'footer.signInAt': '登录{site}（{domain}）',
+  'footer.chip.global': '国际',
+  'footer.chip.cn': '中国',
+  'footer.waiting': '等待授权…',
+  'footer.reopen': '重开',
+  'footer.cancel': '取消',
+  'footer.reauth': '需要重新登录',
+  'footer.failed': '登录失败',
 }
 
 export type Key = keyof typeof zh
@@ -55,6 +68,19 @@ export const en: Record<Key, string> = {
   'account.cancel': 'Cancel sign-in',
   'account.signOut': 'Sign out',
   'account.failed': 'Sign-in failed: {error}',
+
+  'footer.brand': 'OpenVulcan',
+  'footer.signedOut': 'Not signed in',
+  'footer.signedInAs': 'OpenVulcan: {name}',
+  'footer.open': 'Open the OpenVulcan account settings',
+  'footer.signInAt': 'Sign in at {site} ({domain})',
+  'footer.chip.global': 'Global',
+  'footer.chip.cn': 'China',
+  'footer.waiting': 'Waiting for approval…',
+  'footer.reopen': 'Reopen',
+  'footer.cancel': 'Cancel',
+  'footer.reauth': 'Sign in again',
+  'footer.failed': 'Sign-in failed',
 }
 
 /** Replace `{name}` placeholders. */

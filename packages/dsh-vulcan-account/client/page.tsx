@@ -3,12 +3,7 @@
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react'
 
 import { fill, type Key, type Translate } from './i18n'
-import { callAccount, GUARD_SECTION, messageOf, SETTINGS_SECTION, type AccountView, type HostWatch } from './shared'
-
-const SITES = [
-  { site: 'global', domain: 'openvulcan.com' },
-  { site: 'cn', domain: 'openvulcan.cn' },
-] as const
+import { callAccount, GUARD_SECTION, messageOf, SETTINGS_SECTION, SITES, type AccountView, type HostWatch, type Site } from './shared'
 
 export function AccountPage({ view, t }: { view: HostWatch<AccountView | null>; t: Translate }) {
   const live = useSyncExternalStore(view.subscribe, view.getSnapshot)
@@ -32,7 +27,7 @@ export function AccountPage({ view, t }: { view: HostWatch<AccountView | null>; 
       view.refresh()
     })
   }
-  const signIn = (site: 'cn' | 'global'): void => {
+  const signIn = (site: Site): void => {
     // Opened during the click, so no popup blocker stops it, and pointed at the page once known.
     const popup = window.open('about:blank', '_blank')
     act(async () => {

@@ -133,6 +133,16 @@ export interface PendingSignIn {
   cancel(): void
 }
 
+/** The signed-in user as OpenVulcan names them, and the plan in force. */
+export interface AccountProfile {
+  /** Decimal public user id, kept as a string. */
+  readonly id: string
+  readonly username: string
+  readonly nickname: string
+  /** The membership tier, or the free tier when not subscribed. */
+  readonly plan: string
+}
+
 /** What a judge needs from an account: its state and a usable credential. */
 export interface AccountSource {
   status(): Promise<AccountStatus>
@@ -240,6 +250,27 @@ export class OpenVulcanAccount implements AccountSource {
         settle.reject(new AccountError('the sign-in was cancelled'))
       },
     }
+  }
+
+  /**
+   * Who is signed in, read from `GET /api/v1/vulcancode/account`; an answer for another device
+   * authorization is refused.
+   * @throws AccountError when nobody is signed in or the answer breaks the contract.
+   */
+  async profile(): Promise<AccountProfile> {
+    const credential = await this.credential()
+    const answer = await requestJson(`${credential.auth_origin}/api/v1/vulcancode/account`, credential.access_token, { method: 'GET' }) as {
+      authorization_id?: unknown
+      user?: { id?: unknown; username?: unknown; nickname?: unknown }
+      quota?: { free?: { tier?: unknown }; member?: { tier?: unknown } | null }
+    }
+    const user = answer?.user
+    const tier = answer?.quota?.member?.tier ?? answer?.quota?.free?.tier
+    if (typeof user?.id !== 'string' || typeof user.username !== 'string' || typeof user.nickname !== 'string' || typeof tier !== 'string') {
+      throw new AccountError('OpenVulcan answered a malformed account')
+    }
+    if (answer.authorization_id !== credential.authorization_id) throw new AccountError('OpenVulcan answered the account of another device authorization')
+    return { id: user.id, username: user.username, nickname: user.nickname, plan: tier }
   }
 
   /** Revoke the credential on the server and forget it here. */

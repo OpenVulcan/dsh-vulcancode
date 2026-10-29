@@ -12,6 +12,7 @@
  * - `packages/client/ui-approval/src/client/contract/slots.ts` (`PendingApproval`)
  * - `packages/client/ui-conversation/src/client/contract/slots.ts` (composer chain, input slots)
  * - `packages/client/ui-settings/src/client/contract/slots.ts` (`settings.section`)
+ * - `packages/client/ui-sidebar/src/client/contract/slots.ts` (`sidebar.footer.action`)
  * - `packages/client/ui-settings-general/src/client/{index,shell-store}.ts` (`sidebar.settings` store)
  * - `packages/client/locale/src/client/index.ts` (`bind`)
  * - `packages/client/ui-session/src/client/index.ts` (`sessionId`, `useProjection` props)
@@ -130,6 +131,13 @@ export interface SettingsSectionProps {
   readonly t: (key: string) => string
 }
 
+/** Owner props of a `sidebar.footer.action` entry, plus the dictionary of its locale namespace. */
+export interface SidebarFooterActionProps {
+  /** False while the sidebar is the 56px rail. */
+  readonly wide: boolean
+  readonly t: (key: string) => string
+}
+
 /** The Settings dialog store's actions this client uses. */
 export interface SettingsShell {
   readonly actions: { openSection(id: string): void }
@@ -187,6 +195,16 @@ export interface ClientContext {
         readonly inject: () => I
       },
       component: (props: SettingsSectionProps & I) => import('react').ReactNode,
+    ): () => void
+    register<I extends object>(
+      options: {
+        readonly name: 'sidebar.footer.action'
+        readonly id: string
+        readonly order?: number
+        readonly locale: string
+        readonly inject: () => I
+      },
+      component: (props: SidebarFooterActionProps & I) => import('react').ReactNode,
     ): () => void
     register<M, I extends object>(
       options: {

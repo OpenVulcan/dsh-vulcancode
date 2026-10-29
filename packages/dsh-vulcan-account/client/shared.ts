@@ -11,11 +11,32 @@ export const GUARD_SECTION = 'vulcan-auto-approval'
 /** Mirrors `ROUTE_PREFIX` in `src/index.ts`, below the page's origin. */
 const ROUTE_BASE = '/api/vulcan-account/'
 
+/** The two OpenVulcan sites, in the order they are offered. */
+export const SITES = [
+  { site: 'global', domain: 'openvulcan.com' },
+  { site: 'cn', domain: 'openvulcan.cn' },
+] as const
+export type Site = (typeof SITES)[number]['site']
+
 /** Mirrors `AccountView` in `src/index.ts`. */
 export interface AccountView {
-  readonly account: { readonly signedIn: boolean; readonly site?: 'cn' | 'global'; readonly expiresAt?: string; readonly reauthRequired?: boolean }
+  readonly account: {
+    readonly signedIn: boolean
+    readonly site?: Site
+    readonly authorizationId?: string
+    readonly expiresAt?: string
+    readonly reauthRequired?: boolean
+  }
   readonly signIn: { readonly approvalUrl: string; readonly expiresAt: string } | null
   readonly signInError?: string
+}
+
+/** Mirrors `AccountProfile` in `@openvulcan/openvulcan-account`. */
+export interface AccountProfile {
+  readonly id: string
+  readonly username: string
+  readonly nickname: string
+  readonly plan: string
 }
 
 export async function callAccount<T>(method: 'GET' | 'POST', route: string): Promise<T> {

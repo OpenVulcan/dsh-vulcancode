@@ -5,19 +5,16 @@
  * authenticated connection.
  */
 
-import os from 'node:os'
-
 import { Service, type Context } from '@deepseek-ai/cordis'
+import { getDshRuntimeVersion } from '@deepseek-ai/dsh-app-boot'
 import type {} from '@deepseek-ai/dsh-client-connection'
 import { credentialKey } from '@deepseek-ai/dsh-credentials'
 import {
   AccountError, isSite, OpenVulcanAccount, parseCredential,
-  type AccountSource, type AccountStatus, type Credential, type CredentialStore, type PendingSignIn, type Site,
+  type AccountProfile, type AccountSource, type AccountStatus, type Credential, type CredentialStore, type PendingSignIn, type Site,
 } from '@openvulcan/openvulcan-account'
 
-import { VERSION } from './version.js'
-
-export type { AccountStatus, Credential, PendingSignIn, Site } from '@openvulcan/openvulcan-account'
+export type { AccountProfile, AccountStatus, Credential, PendingSignIn, Site } from '@openvulcan/openvulcan-account'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -44,9 +41,12 @@ export interface AccountView {
   readonly signInError?: string
 }
 
-/** The device name OpenVulcan lists for this sign-in. */
-export function deviceInfo(version: string) {
-  return { display_name: `dsh on ${os.hostname()}`, client_version: `dsh-vulcancode ${version}` }
+/**
+ * How OpenVulcan records this sign-in: the client is dsh at its exact running version, so the
+ * platform can count dsh installations the way it counts "Vulcan Code".
+ */
+export function deviceInfo(dshVersion: string) {
+  return { display_name: 'dsh', client_version: dshVersion }
 }
 
 /** The account credential as one dsh grant record. */
@@ -79,11 +79,13 @@ export class OpenVulcanAccountService extends Service implements AccountSource {
   private readonly listeners = new Set<(status: AccountStatus) => void>()
   private pending: PendingSignIn | undefined
   private pendingError: string | undefined
+  /** The profile of one device authorization, read once per sign-in. */
+  private profileCache: { readonly authorizationId: string; readonly profile: Promise<AccountProfile> } | undefined
 
   constructor(ctx: Context) {
     super(ctx, 'openvulcanAccount')
     // Tests point sign-in at a local stand-in.
-    this.account = new OpenVulcanAccount(new DshCredentialStore(ctx), deviceInfo(VERSION), process.env['OPENVULCAN_AUTH_ORIGIN'])
+    this.account = new OpenVulcanAccount(new DshCredentialStore(ctx), deviceInfo(getDshRuntimeVersion()), process.env['OPENVULCAN_AUTH_ORIGIN'])
 
     // The settings routes live inside dsh's authenticated connection, when there is one.
     ctx.inject(['connection'], (child) => {
@@ -150,6 +152,23 @@ export class OpenVulcanAccountService extends Service implements AccountSource {
     }
   }
 
+  /**
+   * Who is signed in, read from OpenVulcan once per device authorization; a failed read is not kept.
+   * @throws AccountError when nobody is signed in.
+   */
+  async profile(): Promise<AccountProfile> {
+    const status = await this.account.status()
+    if (!status.signedIn || status.authorizationId === undefined) throw new AccountError('not signed in to OpenVulcan')
+    if (this.profileCache?.authorizationId !== status.authorizationId) {
+      const cache = { authorizationId: status.authorizationId, profile: this.account.profile() }
+      this.profileCache = cache
+      cache.profile.catch(() => {
+        if (this.profileCache === cache) this.profileCache = undefined
+      })
+    }
+    return await this.profileCache.profile
+  }
+
   /** Called after every sign-in and sign-out; returns the unsubscribe function. */
   onChange(listener: (status: AccountStatus) => void): () => void {
     this.listeners.add(listener)
@@ -166,6 +185,7 @@ export class OpenVulcanAccountService extends Service implements AccountSource {
   }
 
   private notify(status: AccountStatus): void {
+    this.profileCache = undefined
     for (const listener of this.listeners) {
       try {
         listener(status)
@@ -187,6 +207,7 @@ class RequestError extends Error {
 /** Every settings route: method, path below {@link ROUTE_PREFIX}, handler. */
 export const ROUTES: readonly (readonly ['GET' | 'POST', string, Handler])[] = [
   ['GET', 'state', account => account.view()],
+  ['GET', 'profile', account => account.profile()],
   ['POST', 'signin', async (account, _request, url) => {
     const site = url.searchParams.get('site')
     if (!isSite(site)) throw new RequestError('site must be cn or global')
