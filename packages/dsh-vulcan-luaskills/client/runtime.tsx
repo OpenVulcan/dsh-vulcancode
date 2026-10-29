@@ -84,7 +84,6 @@ export function RuntimeSection({ view, live, t }: { view: HostWatch<RuntimeView 
           <div className="vls-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={share === null ? undefined : Math.round(share * 100)}>
             <span className={share === null ? 'vls-bar-fill indeterminate' : 'vls-bar-fill'} style={share === null ? undefined : { width: `${share * 100}%` }} />
           </div>
-          {unpacking && state.phase === 'core' ? <p className="vac-hint">{t('runtime.unpackingSlow')}</p> : null}
           <ol className="vls-steps">
             {PHASES.map((phase, at) => (
               <li key={phase} className={at < index ? 'done' : at === index ? 'now' : ''}>{t(`runtime.phase.${phase}` as Key)}</li>
