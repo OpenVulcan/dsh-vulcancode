@@ -3,7 +3,7 @@
   "version": "0.4.0",
   "description": "Interactive answers for DeepSeek Harness: the model answers with VulcanCode ui-* components, rendered in the chat.",
   "license": "MIT",
-  "icon": "./assets/openvulcan-icon.svg",
+  "icon": "./assets/answers-icon.png",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/OpenVulcan/dsh-vulcancode.git",

@@ -3,7 +3,7 @@
   "version": "0.4.0",
   "description": "The VulcanCode look for DeepSeek Harness: Vulcan light, dark and command themes with square corners.",
   "license": "MIT",
-  "icon": "./assets/openvulcan-icon.svg",
+  "icon": "./assets/style-icon.png",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/OpenVulcan/dsh-vulcancode.git",

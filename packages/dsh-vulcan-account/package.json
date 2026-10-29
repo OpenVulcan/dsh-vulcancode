@@ -3,7 +3,7 @@
   "version": "0.4.0",
   "description": "OpenVulcan account for DeepSeek Harness: sign in once, used by every VulcanCode plugin.",
   "license": "MIT",
-  "icon": "./assets/openvulcan-icon.svg",
+  "icon": "./assets/account-icon.png",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/OpenVulcan/dsh-vulcancode.git",

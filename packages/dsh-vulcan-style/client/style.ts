@@ -18,7 +18,8 @@ import { PALETTES, VULCAN_THEME_IDS } from './themes'
 
 /**
  * The VulcanCode symbol as a CSS image: the chevron in the theme's ink and the flame in the brand
- * gradient. The paths are the symbol in `assets/openvulcan-icon.svg`; re-read it when the logo changes.
+ * gradient. The paths are the symbol in the suite's `packages/dsh-vulcancode/assets/openvulcan-icon.svg`;
+ * re-read it when the logo changes.
  */
 function vulcanMark(ink: string, width: number, height: number): string {
   const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='${width}' height='${height}' viewBox='32 29 232 259'>`
