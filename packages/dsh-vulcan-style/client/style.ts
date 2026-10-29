@@ -2,10 +2,12 @@
  * The plugin's stylesheet, in two parts:
  *
  * - The settings row (`.vst-*`), drawn with dsh's alias tokens so it follows whatever theme is active.
- * - The few places VulcanCode differs from what dsh draws with fixed values. These rules apply only
- *   while a Vulcan theme is active (`html[data-vulcan-theme]`, set by `controller.ts`) and reach dsh
- *   only through stable hooks: data attributes and the semantic `md-*` classes, never the hashed
- *   CSS-module class names.
+ * - VulcanCode's shell elements that dsh draws differently and no token reaches: the ember marks on
+ *   the current place, the framed menus and dialogs, and the settings navigation.
+ *   These rules apply only while a Vulcan theme is active (`html[data-vulcan-theme]`, set by
+ *   `controller.ts`) and reach dsh only through stable hooks: slot names (`data-slot`, whose elements
+ *   are `display: contents`, so rules go to their children or ancestors), other data attributes, ARIA
+ *   roles and states, and the semantic `md-*` classes, never the hashed CSS-module class names.
  */
 
 import { SQUARE_ATTRIBUTE, THEME_ATTRIBUTE } from './controller'
@@ -15,19 +17,80 @@ import { PALETTES, VULCAN_THEME_IDS } from './themes'
 
 /** Plugin variables per Vulcan theme, read by the scoped rules below. */
 const themeVariables = (name: string, p: Palette): string => `html[${THEME_ATTRIBUTE}="${name}"] {
+  --vulcan-ground-2: ${p.ground2};
+  --vulcan-panel: ${p.panel};
+  --vulcan-hover: ${p.hover};
+  --vulcan-line: ${p.line};
+  --vulcan-line-strong: ${p.lineStrong};
+  --vulcan-ink: ${p.ink};
+  --vulcan-ink-2: ${p.ink2};
+  --vulcan-ink-3: ${p.ink3};
+  --vulcan-ink-inverse: ${p.inkInverse};
   --vulcan-ember: ${p.ember};
   --vulcan-signal-soft: ${p.signalSoft};
+  --vulcan-shadow-1: ${p.shadow1};
+  --vulcan-shadow-2: ${p.shadow2};
+  --vulcan-scrim: ${p.scrim};
   --vulcan-ambient: ${p.ambient};
 }`
 
+/** Root of every scoped rule. */
+const V = `html[${THEME_ATTRIBUTE}]`
+/** The settings dialog. */
+const SETTINGS = `${V} [data-shortcut-modal="settings"]`
+/** The workspace tree in the sidebar. */
+const TREE = `${V} [data-slot="sidebar.workspaces"] [role="tree"]`
+
 const VULCAN = `
 ${VULCAN_THEME_IDS.map(id => themeVariables(id.slice('vulcan-'.length), PALETTES[id])).join('\n')}
-html[${THEME_ATTRIBUTE}] ::selection { background: var(--vulcan-signal-soft); color: var(--dsw-alias-label-primary); }
+${V} {
+  --vulcan-tick-w: 28px;
+  --vulcan-font-mono: "Geist Mono", "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+  --vulcan-label-font: inherit;
+  --vulcan-label-case: none;
+  --vulcan-label-track: 0;
+}
+/* The command bridge sets its labels in capitals of the mono face, as VulcanCode's HUD does. */
+html[${THEME_ATTRIBUTE}="command"] {
+  --vulcan-label-font: var(--vulcan-font-mono);
+  --vulcan-label-case: uppercase;
+  --vulcan-label-track: 0.08em;
+}
+${V} ::selection { background: var(--vulcan-signal-soft); color: var(--dsw-alias-label-primary); }
 /* The ember and signal glow behind the conversation; its scroll port is transparent over the canvas. */
-html[${THEME_ATTRIBUTE}] [data-conversation-scroll] { background-image: var(--vulcan-ambient); background-attachment: fixed; }
+${V} [data-conversation-scroll] { background-image: var(--vulcan-ambient); background-attachment: fixed; }
 /* Code blocks are framed objects in VulcanCode: a hairline frame and a ruled header. */
-html[${THEME_ATTRIBUTE}] .md-code-block { border: 1px solid var(--dsw-alias-border-l2); }
-html[${THEME_ATTRIBUTE}] .md-code-block [data-code-block-banner] { border-bottom: 1px solid var(--dsw-alias-border-l1); }
+${V} .md-code-block { border: 1px solid var(--dsw-alias-border-l2); }
+${V} .md-code-block [data-code-block-banner] { border-bottom: 1px solid var(--dsw-alias-border-l1); }
+
+/* Sidebar. New session is VulcanCode's primary action: an ink plate. */
+${V} [data-slot="sidebar"] > * > button[aria-keyshortcuts] { background: var(--vulcan-ink); color: var(--vulcan-ink-inverse); box-shadow: 0 0 0 1px var(--vulcan-ink); }
+${V} [data-slot="sidebar"] > * > button[aria-keyshortcuts]:hover { background: color-mix(in srgb, var(--vulcan-ink) 86%, var(--vulcan-ground-2)); }
+/* The current session is a framed panel row with an ember edge; its workspace's folder takes the ember. */
+${TREE} [role="treeitem"][aria-selected="true"] { position: relative; background: var(--vulcan-panel); box-shadow: inset 0 0 0 1px var(--vulcan-line); color: var(--vulcan-ink); }
+${TREE} [role="treeitem"][aria-selected="true"]::before { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 2px; background: var(--vulcan-ember); pointer-events: none; }
+${TREE} [role="treeitem"][data-row-key^="workspace:"] > :first-child { color: var(--vulcan-ink-3); }
+${TREE} > :has([role="treeitem"][aria-selected="true"]) [role="treeitem"][data-row-key^="workspace:"] > :first-child { color: var(--vulcan-ember); }
+/* The account row sits under a rule, like VulcanCode's sidebar foot. */
+${V} [data-slot="sidebar"] > * > :has(> * > [data-slot="sidebar.settings"]) { padding-top: 6px; box-shadow: 0 -1px 0 var(--vulcan-line); }
+
+/* Composer: a quiet floating card whose edge deepens while typing. */
+${V} [data-composer-card] { box-shadow: 0 0 0 1px var(--vulcan-line-strong), var(--vulcan-shadow-1); transition: box-shadow .16s ease; }
+${V} [data-composer-card]:focus-within { box-shadow: 0 0 0 1px var(--vulcan-ink-3), var(--vulcan-shadow-2); }
+
+/* Menus and dialogs are framed raised plates; a dialog's backdrop is a light frosted glass. */
+${V} [role="menu"][data-menu-material] { box-shadow: 0 0 0 1px var(--vulcan-line-strong), var(--vulcan-shadow-2); }
+${V} [role="dialog"][aria-modal="true"] { box-shadow: 0 0 0 1px var(--vulcan-line-strong), var(--vulcan-shadow-2); }
+${V} [aria-hidden="true"]:has(+ [role="dialog"][aria-modal="true"]) { background: var(--vulcan-scrim); backdrop-filter: blur(3px) saturate(1.05); }
+
+/* Settings: an ember corner tick and a navigation well whose current page carries the ember edge. */
+${SETTINGS}::before { content: ""; position: absolute; z-index: 1; top: -1px; left: -1px; width: var(--vulcan-tick-w); height: 2px; background: var(--vulcan-ember); pointer-events: none; }
+${SETTINGS} > nav { background: var(--vulcan-ground-2); box-shadow: inset -1px 0 0 var(--vulcan-line); }
+${SETTINGS} > nav button { color: var(--vulcan-ink-2); }
+${SETTINGS} > nav button:hover { background: var(--vulcan-hover); color: var(--vulcan-ink); }
+${SETTINGS} > nav button[aria-current="true"] { background: var(--vulcan-panel); color: var(--vulcan-ink); box-shadow: inset 2px 0 0 var(--vulcan-ember), 0 0 0 1px var(--vulcan-line); }
+${SETTINGS} > nav button[aria-current="true"] svg { color: var(--vulcan-ember); }
+${V} [data-slot="settings.header"] { color: var(--vulcan-ink-3); font-family: var(--vulcan-label-font); font-size: 12px; font-weight: 500; letter-spacing: var(--vulcan-label-track); text-transform: var(--vulcan-label-case); }
 `
 
 const ROW = `

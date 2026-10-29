@@ -56,6 +56,8 @@ export interface Palette {
   readonly shadow2: string
   /** RGB channels of the palette's darkest shade, for scrims and media toolbars. */
   readonly shade: string
+  /** The light frosted layer behind a dialog (VulcanCode's `--vk-scrim`). */
+  readonly scrim: string
   /** Scrollbar thumb and its hover colour. */
   readonly scrollbar: string
   readonly scrollbarHover: string
@@ -98,6 +100,7 @@ export const LIGHT: Palette = {
   shadow1: '0 1px 2px rgba(17, 21, 28, 0.05)',
   shadow2: '0 12px 32px rgba(17, 21, 28, 0.14), 0 2px 6px rgba(17, 21, 28, 0.06)',
   shade: '16, 19, 24',
+  scrim: 'rgba(16, 19, 24, 0.08)',
   scrollbar: '#c3c9d1',
   scrollbarHover: '#626973',
   ambient: 'radial-gradient(70rem 30rem at 8% -12%, rgba(226, 81, 26, 0.07), transparent 62%), '
@@ -139,6 +142,7 @@ export const DARK: Palette = {
   shadow1: '0 1px 2px rgba(0, 0, 0, 0.4)',
   shadow2: '0 16px 40px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.4)',
   shade: '0, 0, 0',
+  scrim: 'rgba(0, 0, 0, 0.18)',
   scrollbar: '#343b45',
   scrollbarHover: '#848c97',
   ambient: 'radial-gradient(64rem 30rem at 50% 118%, rgba(255, 106, 43, 0.11), transparent 66%), '
@@ -188,6 +192,7 @@ export const COMMAND: Palette = {
   shadow1: '0 0 0 1px rgba(56, 214, 255, 0.04)',
   shadow2: '0 0 0 1px rgba(56, 214, 255, 0.22), 0 18px 48px rgba(0, 0, 0, 0.7), 0 0 32px rgba(56, 214, 255, 0.08)',
   shade: '1, 4, 9',
+  scrim: 'rgba(1, 4, 9, 0.22)',
   // color-mix(in srgb, signal 38%, transparent), as VulcanCode's command scrollbar.
   scrollbar: 'rgba(56, 214, 255, 0.38)',
   scrollbarHover: '#6d92a3',

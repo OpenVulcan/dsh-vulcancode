@@ -168,7 +168,7 @@ export function skinTokens(p: Palette): Record<SkinToken, string> {
     '--dsw-linear-think-select': `linear-gradient(180deg, ${p.sunken} 20.19%, ${fade(p.sunken, 0)} 100%)`,
 
     // Shell: the navigation well, the composer, the user's prompts.
-    '--dsw-specific-sidebar-fill': mix(p.ground2, 45, p.ground),
+    '--dsw-specific-sidebar-fill': p.ground2,
     '--dsw-specific-sidebar-nav-item-hover': p.hover,
     '--dsw-specific-sidebar-nav-item-active': p.select,
     '--dsw-specific-sidebar-nav-item-active-accent': p.emberSoft,
