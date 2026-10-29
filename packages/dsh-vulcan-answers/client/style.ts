@@ -8,9 +8,9 @@
 
 const TOKENS = `
   --vk-u: 4px;
-  --vk-panel: var(--dsw-alias-bg-base, #fff);
-  --vk-raised: var(--dsw-alias-bg-base, #fff);
-  --vk-sunken: var(--dsw-alias-bg-layer-1, #f6f7f9);
+  --vk-panel: var(--dsw-alias-bg-layer-1, #fff);
+  --vk-raised: var(--dsw-alias-bg-layer-2, #fff);
+  --vk-sunken: var(--dsw-alias-bg-module-platform, #f6f7f9);
   --vk-hover: var(--dsw-alias-interactive-bg-hover, #eef1f4);
   --vk-line-soft: var(--dsw-alias-border-l1, #eaecef);
   --vk-line: var(--dsw-alias-border-l2, #dde1e6);
@@ -18,7 +18,7 @@ const TOKENS = `
   --vk-ink: var(--dsw-alias-label-primary, #14171c);
   --vk-ink-2: var(--dsw-alias-label-secondary, #4a515c);
   --vk-ink-3: var(--dsw-alias-label-tertiary, #626973);
-  --vk-ink-inverse: var(--dsw-alias-bg-base, #fff);
+  --vk-ink-inverse: var(--dsw-alias-label-primary-foreground, #fff);
   --vk-ok: var(--dsw-alias-state-success-primary, #18774a);
   --vk-warn: var(--dsw-alias-state-warn-primary, #945d09);
   --vk-bad: var(--dsw-alias-state-error-primary, #c3303d);

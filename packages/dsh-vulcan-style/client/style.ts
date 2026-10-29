@@ -3,7 +3,8 @@
  *
  * - The settings row (`.vst-*`), drawn with dsh's alias tokens so it follows whatever theme is active.
  * - VulcanCode's shell elements that dsh draws differently and no token reaches: the ember marks on
- *   the current place, the framed menus and dialogs, and the settings navigation.
+ *   the current place, the framed menus and dialogs, the settings navigation, and the VulcanCode
+ *   symbol beside dsh's own brand.
  *   These rules apply only while a Vulcan theme is active (`html[data-vulcan-theme]`, set by
  *   `controller.ts`) and reach dsh only through stable hooks: slot names (`data-slot`, whose elements
  *   are `display: contents`, so rules go to their children or ancestors), other data attributes, ARIA
@@ -15,8 +16,25 @@ import type { Palette } from './palette'
 import { PACKAGE_NAME } from './shared'
 import { PALETTES, VULCAN_THEME_IDS } from './themes'
 
+/**
+ * The VulcanCode symbol as a CSS image: the chevron in the theme's ink and the flame in the brand
+ * gradient. The paths are the symbol in `assets/openvulcan-icon.svg`; re-read it when the logo changes.
+ */
+function vulcanMark(ink: string, width: number, height: number): string {
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='${width}' height='${height}' viewBox='32 29 232 259'>`
+    + `<defs><linearGradient id='flame' x1='0%' y1='100%' x2='100%' y2='0%'>`
+    + `<stop offset='0%' stop-color='#FF6527'/><stop offset='100%' stop-color='#F44E1C'/></linearGradient></defs>`
+    + `<path d='M 2 0 L 84 0 C 88 0 91 1 95 5 L 153 76 C 159 83 159 95 153 102 L 95 173 C 91 177 88 178 84 178 L 2 178 L 78 89 Z'`
+    + ` fill='${ink}' transform='translate(30 110)'/>`
+    + `<path d='M 73 0 C 64 14 51 28 38 40 C 21 55 7 68 2 87 C -2 107 8 129 25 150 C 39 134 53 119 67 107`
+    + ` C 82 95 91 79 93 60 C 95 40 86 18 73 0 Z' fill='url(#flame)' transform='translate(169 29)'/></svg>`
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`
+}
+
 /** Plugin variables per Vulcan theme, read by the scoped rules below. */
 const themeVariables = (name: string, p: Palette): string => `html[${THEME_ATTRIBUTE}="${name}"] {
+  --vulcan-mark-sm: ${vulcanMark(p.ink, 13, 15)};
+  --vulcan-mark-lg: ${vulcanMark(p.ink, 22, 25)};
   --vulcan-ground-2: ${p.ground2};
   --vulcan-panel: ${p.panel};
   --vulcan-hover: ${p.hover};
@@ -62,6 +80,11 @@ ${V} [data-conversation-scroll] { background-image: var(--vulcan-ambient); backg
 /* Code blocks are framed objects in VulcanCode: a hairline frame and a ruled header. */
 ${V} .md-code-block { border: 1px solid var(--dsw-alias-border-l2); }
 ${V} .md-code-block [data-code-block-banner] { border-bottom: 1px solid var(--dsw-alias-border-l1); }
+
+/* The VulcanCode symbol joins DeepSeek's own brand, after the sidebar wordmark and the welcome fish;
+   dsh's brand stays as it is. The alt text after the slash keeps the pair silent to screen readers. */
+${V} [data-slot="sidebar.brand.name"]::after { content: "\\00d7" var(--vulcan-mark-sm) / ""; display: inline-flex; flex: none; align-items: center; gap: 4px; color: var(--vulcan-ink-3); font-size: 12px; white-space: nowrap; }
+${V} [data-slot="conversation.hero.brand.mark"]::after { content: "\\00d7" var(--vulcan-mark-lg) / ""; display: inline-flex; flex: none; align-items: center; gap: 8px; margin-left: 8px; color: var(--vulcan-ink-3); font-size: 16px; white-space: nowrap; }
 
 /* Sidebar. New session is VulcanCode's primary action: an ink plate. */
 ${V} [data-slot="sidebar"] > * > button[aria-keyshortcuts] { background: var(--vulcan-ink); color: var(--vulcan-ink-inverse); box-shadow: 0 0 0 1px var(--vulcan-ink); }
