@@ -82,13 +82,15 @@ ${V} .md-code-block { border: 1px solid var(--dsw-alias-border-l2); }
 ${V} .md-code-block [data-code-block-banner] { border-bottom: 1px solid var(--dsw-alias-border-l1); }
 
 /* The VulcanCode symbol joins DeepSeek's own brand, after the sidebar wordmark and the welcome fish;
-   dsh's brand stays as it is. The alt text after the slash keeps the pair silent to screen readers. */
-${V} [data-slot="sidebar.brand.name"]::after { content: "\\00d7" var(--vulcan-mark-sm) / ""; display: inline-flex; flex: none; align-items: center; gap: 4px; color: var(--vulcan-ink-3); font-size: 12px; white-space: nowrap; }
-${V} [data-slot="conversation.hero.brand.mark"]::after { content: "\\00d7" var(--vulcan-mark-lg) / ""; display: inline-flex; flex: none; align-items: center; gap: 8px; margin-left: 8px; color: var(--vulcan-ink-3); font-size: 16px; white-space: nowrap; }
+   dsh's brand stays as it is. The empty alt text after the slash keeps the symbol silent to screen readers. */
+${V} [data-slot="sidebar.brand.name"]::after { content: var(--vulcan-mark-sm) / ""; display: inline-flex; flex: none; align-items: center; }
+${V} [data-slot="conversation.hero.brand.mark"]::after { content: var(--vulcan-mark-lg) / ""; display: inline-flex; flex: none; align-items: center; margin-left: 8px; }
 
 /* Sidebar. New session is VulcanCode's primary action: an ink plate. */
 ${V} [data-slot="sidebar"] > * > button[aria-keyshortcuts] { background: var(--vulcan-ink); color: var(--vulcan-ink-inverse); box-shadow: 0 0 0 1px var(--vulcan-ink); }
 ${V} [data-slot="sidebar"] > * > button[aria-keyshortcuts]:hover { background: color-mix(in srgb, var(--vulcan-ink) 86%, var(--vulcan-ground-2)); }
+/* Its shortcut hint is dsh's tertiary grey, which vanishes on the ink plate; it takes the plate's own ink, one step down. */
+${V} [data-slot="sidebar"] > * > button[aria-keyshortcuts] :is(:has(> kbd), kbd) { color: color-mix(in srgb, var(--vulcan-ink-inverse) 70%, var(--vulcan-ink)); }
 /* The current session is a framed panel row with an ember edge; its workspace's folder takes the ember. */
 ${TREE} [role="treeitem"][aria-selected="true"] { position: relative; background: var(--vulcan-panel); box-shadow: inset 0 0 0 1px var(--vulcan-line); color: var(--vulcan-ink); }
 ${TREE} [role="treeitem"][aria-selected="true"]::before { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 2px; background: var(--vulcan-ember); pointer-events: none; }
