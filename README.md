@@ -33,6 +33,7 @@ dsh plugin add @openvulcan/dsh-vulcancode
 | OpenVulcan 账号 | 登录一次，套件内各插件共用；凭据保存在 dsh 的凭据存储中。设置位于「设置 › OpenVulcan 账号」 |
 | 自动审批（Vulcan Decision） | 每次工具调用前由专用判定模型判断放行、需确认或拦下；未放行的可交复核 LLM，再询问你或拒绝 |
 | 交互式回答 | 模型可以用 VulcanCode 的 `ui-*` 组件作答，在对话中渲染；启用后默认开启，可按会话关闭 |
+| LuaSkills | 技能以工具形式提供给 AI，默认技能 codekit（代码导航）；运行库约 190 MB，在「设置 › LuaSkills」中按需安装，装好即自动接入。侧栏的 LuaSkills 页面管理已装技能并连接 LuaSkills Hub |
 | Vulcan 界面风格 | VulcanCode 的主题、直角与配色 |
 
 > **我们承诺：云端命令判定模型永久免费提供。**（2026 年 10 月 27 日）
@@ -42,7 +43,8 @@ dsh plugin add @openvulcan/dsh-vulcancode
 1. 安装后重启 dsh，打开「设置 › OpenVulcan 账号」，选择国际站或中国站登录。
 2. 打开「设置 › 自动审批」，在权限选择器中选择“自动审查”，或把接入方式改为“独立开关”。不登录也可以改用本机
    模型判定。
-3. 交互式回答和界面风格安装即生效，可在各自的设置中调整。
+3. 需要 LuaSkills 时，打开「设置 › LuaSkills」点击安装运行库，进度显示在页面上，完成后技能工具自动出现。
+4. 交互式回答和界面风格安装即生效，可在各自的设置中调整。
 
 ## 自动审批的边界
 
@@ -58,6 +60,7 @@ dsh plugin add @openvulcan/dsh-vulcancode
 | `@openvulcan/dsh-vulcan-account` | OpenVulcan 账号插件，向其他插件提供 `openvulcanAccount` 服务 |
 | `@openvulcan/dsh-decision-guard` | 自动审批插件 |
 | `@openvulcan/dsh-vulcan-answers` | 交互式回答插件 |
+| `@openvulcan/dsh-vulcan-luaskills` | LuaSkills 插件：运行库安装、技能工具、VM 设置与 Hub |
 | `@openvulcan/dsh-vulcan-style` | 界面风格插件 |
 | `@openvulcan/vulcan-decision` | 判定引擎与命令行 `vulcan-decision` |
 | `@openvulcan/openvulcan-account` | OpenVulcan 账号库：登录、刷新与凭据存储接口 |

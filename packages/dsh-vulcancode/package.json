@@ -1,7 +1,7 @@
 {
   "name": "@openvulcan/dsh-vulcancode",
   "version": "0.4.0",
-  "description": "VulcanCode for DeepSeek Harness (dsh): OpenVulcan account, Vulcan Decision permission guard, interactive answers and the VulcanCode look. Community plugins, not affiliated with DeepSeek.",
+  "description": "VulcanCode for DeepSeek Harness (dsh): OpenVulcan account, Vulcan Decision permission guard, interactive answers, LuaSkills and the VulcanCode look. Community plugins, not affiliated with DeepSeek.",
   "license": "MIT",
   "icon": "./assets/openvulcan-icon.svg",
   "repository": { "type": "git", "url": "git+https://github.com/OpenVulcan/dsh-vulcancode.git", "directory": "packages/dsh-vulcancode" },
@@ -17,6 +17,7 @@
     "@openvulcan/dsh-decision-guard": "workspace:*",
     "@openvulcan/dsh-vulcan-account": "workspace:*",
     "@openvulcan/dsh-vulcan-answers": "workspace:*",
+    "@openvulcan/dsh-vulcan-luaskills": "workspace:*",
     "@openvulcan/dsh-vulcan-style": "workspace:*"
   },
   "publishConfig": { "access": "public" }

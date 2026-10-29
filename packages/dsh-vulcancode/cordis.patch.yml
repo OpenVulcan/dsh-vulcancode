@@ -11,3 +11,5 @@
           name: '@openvulcan/dsh-vulcan-style'
         - id: vulcan-answers
           name: '@openvulcan/dsh-vulcan-answers'
+        - id: vulcan-luaskills
+          name: '@openvulcan/dsh-vulcan-luaskills'

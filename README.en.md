@@ -33,6 +33,7 @@ This project is not affiliated with DeepSeek; dsh is a DeepSeek product.
 | OpenVulcan account | Sign in once; every part of the suite uses it. The credential is kept in dsh's credential store. Settings are under Settings › OpenVulcan account |
 | Auto approval (Vulcan Decision) | Before every tool call, a dedicated decision model answers allow, review or block; calls not allowed can go to a review LLM, then to you or a denial |
 | Interactive answers | The model can answer with VulcanCode's `ui-*` components, rendered in the chat; on by default once enabled, and can be turned off per session |
+| LuaSkills | Skills as tools for the AI, with the default skill codekit (code navigation). The runtime (about 190 MB) is installed on demand from Settings › LuaSkills and connects on its own once installed. The LuaSkills page in the sidebar manages installed skills and the LuaSkills Hub |
 | Vulcan look | VulcanCode's themes, square corners and colors |
 
 > **Our commitment: the cloud command decision model is free, permanently.** (October 27, 2026)
@@ -42,7 +43,8 @@ This project is not affiliated with DeepSeek; dsh is a DeepSeek product.
 1. Restart dsh after installing, open Settings › OpenVulcan account, and sign in at the Global or China site.
 2. Open Settings › Auto approval, then choose "Auto review" in the permission picker or switch the integration
    to "Standalone switch". Without signing in, you can judge with a local model instead.
-3. Interactive answers and the look work once installed; adjust them in their own settings.
+3. For LuaSkills, open Settings › LuaSkills and install the runtime; progress shows on the page, and the skill tools appear when it finishes.
+4. Interactive answers and the look work once installed; adjust them in their own settings.
 
 ## Limits of auto approval
 
@@ -61,6 +63,7 @@ This project is not affiliated with DeepSeek; dsh is a DeepSeek product.
 | `@openvulcan/dsh-vulcan-account` | The OpenVulcan account plugin; offers the `openvulcanAccount` service to the others |
 | `@openvulcan/dsh-decision-guard` | The auto approval plugin |
 | `@openvulcan/dsh-vulcan-answers` | The interactive answers plugin |
+| `@openvulcan/dsh-vulcan-luaskills` | The LuaSkills plugin: runtime install, skill tools, VM settings and the Hub |
 | `@openvulcan/dsh-vulcan-style` | The look plugin |
 | `@openvulcan/vulcan-decision` | The decision engine and the `vulcan-decision` command line |
 | `@openvulcan/openvulcan-account` | The OpenVulcan account library: sign-in, refresh and the credential store interface |
