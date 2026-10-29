@@ -1,0 +1,1 @@
+Answer mode is now standard for this conversation. Stop using `ui-*` answer component fences in subsequent replies; use ordinary Markdown, tables, code blocks, images and links. Earlier replies keep their components.

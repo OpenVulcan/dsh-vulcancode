@@ -1,0 +1,21 @@
+{
+  "name": "@openvulcan/openvulcan-account",
+  "version": "0.4.0",
+  "description": "OpenVulcan account: device sign-in, credential storage and refresh, shared by the Vulcan tools.",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/OpenVulcan/dsh-vulcancode.git", "directory": "packages/openvulcan-account" },
+  "type": "module",
+  "exports": {
+    ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" },
+    "./package.json": "./package.json"
+  },
+  "files": ["lib", "!lib/**/*.test.*"],
+  "scripts": {
+    "build": "node -e \"fs.rmSync('lib',{recursive:true,force:true})\" && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsc -p tsconfig.json && node --test \"lib/**/*.test.js\""
+  },
+  "engines": { "node": ">=20.19" },
+  "devDependencies": { "@types/node": "^24.0.0", "typescript": "^5.9.0" },
+  "publishConfig": { "access": "public" }
+}

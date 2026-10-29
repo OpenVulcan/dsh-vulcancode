@@ -1,0 +1,369 @@
+/**
+ * The Host side of the settings panel: the account status, cloud endpoints, runtime packs, local
+ * models and the decision log, served as exact `/api/vulcan-decision/*` routes inside dsh's authenticated
+ * connection. Only owner peers reach these routes.
+ *
+ * Signing in belongs to the OpenVulcan account plugin; the guard only reads the account through
+ * its service. Packs and models live under `$DSH_HOME/vulcan-decision/`.
+ */
+
+import {
+  DECISIONS, DecisionEngine, DecisionError, DOWNLOAD_SOURCES, MODEL_CATALOG, MODEL_FAMILIES, MODEL_SOURCES, PACK_IDS, PLANNED_PACKS,
+  detectHardware, gpuGeneration, installModelFromDirectory, installPack, installedPack, isPackId, listModels,
+  preferredPrecision, readLock, recommend, removeModel, removePack, downloadModel, sourcesOf,
+  AccountError, type AccountSource, type AccountStatus, type Credential, type Decision, type DecisionHome, type DownloadSource, type EngineSettings, type ModelFamily, type ModelSource,
+  type EndpointSnapshot, type TestInput, type TestResult, type Verdict,
+} from '@openvulcan/vulcan-decision'
+
+import { PAGE_LIMIT_MAX, type DecisionRecord, type RecordExport, type RecordPage, type RecordStore } from './records.js'
+
+/** Prefix of every panel route, below dsh's `/api`. Also restated in `client/index.tsx`. */
+export const ROUTE_PREFIX = '/api/vulcan-decision/'
+
+/**
+ * The account the cloud backend signs with: the OpenVulcan account plugin's service, looked up on
+ * every use. The guard never injects the service, because a required one that is missing would
+ * leave the guard silently pending and its gate gone; without it, cloud judging fails as not
+ * signed in and the call is not allowed.
+ */
+export class ServiceAccount implements AccountSource {
+  constructor(private readonly service: () => AccountSource | undefined) {}
+
+  /** Whether the account plugin is running. */
+  available(): boolean {
+    return this.service() !== undefined
+  }
+
+  async status(): Promise<AccountStatus> {
+    return (await this.service()?.status()) ?? { signedIn: false }
+  }
+
+  async credential(): Promise<Credential> {
+    const service = this.service()
+    if (service === undefined) throw new AccountError('the OpenVulcan account plugin is not running; enable it and sign in')
+    return await service.credential()
+  }
+}
+
+/** A long-running install the panel started; one runs at a time. */
+export interface Job {
+  readonly kind: 'pack' | 'model-download' | 'model-directory'
+  readonly target: string
+  readonly phase: 'download' | 'unpack' | 'install' | 'probe' | 'verify' | 'done' | 'failed' | 'cancelled'
+  readonly done?: number
+  readonly total?: number
+  readonly error?: string
+  readonly startedAt: number
+}
+
+/** The panel's settings, as `src/index.ts` reads them for each request. */
+export interface PanelSettings {
+  readonly engine: () => EngineSettings
+  readonly downloadSource: () => DownloadSource
+  /** Whether the OpenVulcan account plugin is running; without it the cloud backend is signed out. */
+  readonly accountPlugin: () => boolean
+}
+
+export class Panel {
+  private job: Job | undefined
+  private jobAbort: AbortController | undefined
+
+  constructor(readonly engine: DecisionEngine, private readonly settings: PanelSettings, private readonly records: RecordStore) {}
+
+  get home(): DecisionHome {
+    return this.engine.home
+  }
+
+  /** Everything the panel shows, in one answer. */
+  async state() {
+    const hardware = detectHardware()
+    const recommendation = recommend(hardware)
+    const settings = this.settings.engine()
+    return {
+      account: { ...await this.engine.account.status(), plugin: this.settings.accountPlugin() },
+      cloud: this.engine.cloud.snapshot(settings.cloudModel === '' ? undefined : settings.cloudModel, settings.cloudEndpoint),
+      hardware: {
+        ...hardware,
+        gpus: hardware.gpus.map(gpu => ({
+          ...gpu,
+          ...gpu.computeCapability === undefined ? {} : { generation: gpuGeneration(gpu.computeCapability) },
+        })),
+      },
+      recommendation,
+      packs: PACK_IDS.map((pack) => {
+        const lock = readLock(pack)
+        const installed = installedPack(this.home, pack)
+        const fit = recommendation.packs.find(item => item.pack === pack)!
+        return {
+          id: pack, backend: lock.backend, device: lock.device, fit: fit.fit,
+          ...fit.bytes === undefined ? {} : { bytes: fit.bytes },
+          ...fit.needsDriver === undefined ? {} : { needsDriver: fit.needsDriver },
+          installed: installed === undefined ? null : { outdated: installed.lock !== lock.id, installedAt: installed.installed_at },
+        }
+      }),
+      planned: PLANNED_PACKS,
+      models: listModels(this.home).map(model => ({
+        id: model.id, name: model.name, format: model.package_format, bytes: model.bytes, installedAt: model.installed_at,
+        ...model.family === undefined ? {} : { family: model.family },
+      })),
+      catalog: MODEL_CATALOG.map(model => ({
+        family: model.family, name: model.name, parameters: model.parameters, format: model.format,
+        sources: sourcesOf(model),
+      })),
+      local: this.engine.local.status(),
+      job: this.job ?? null,
+      home: this.home.root,
+    }
+  }
+
+  /** The models OpenVulcan lists for this account; the first is the default. */
+  async cloudModels(): Promise<string[]> {
+    return await this.engine.cloud.models()
+  }
+
+  /** The endpoint table of the saved (or default) model, without measuring. */
+  async endpoints(): Promise<EndpointSnapshot> {
+    const settings = this.settings.engine()
+    if (!(await this.engine.account.status()).signedIn) return { mode: 'auto', endpoints: [] }
+    let model: string
+    try {
+      model = await this.engine.cloud.resolveModel(settings.cloudModel)
+    } catch (error) {
+      return { mode: 'auto', error: messageOf(error), endpoints: [] }
+    }
+    this.engine.cloud.refreshIfStale(model)
+    return this.engine.cloud.snapshot(model, settings.cloudEndpoint)
+  }
+
+  /** Measure the endpoints of the saved (or default) model now. */
+  async probe(): Promise<EndpointSnapshot> {
+    const settings = this.settings.engine()
+    const model = await this.engine.cloud.resolveModel(settings.cloudModel)
+    try {
+      return await this.engine.cloud.probe(model, settings.cloudEndpoint)
+    } catch (error) {
+      if (error instanceof DecisionError && error.code !== 'not_signed_in') return this.engine.cloud.snapshot(model, settings.cloudEndpoint)
+      throw error
+    }
+  }
+
+  /** Check an endpoint the user is about to lock against the model it will be saved with. */
+  async checkLock(model: unknown, endpoint: unknown): Promise<void> {
+    if (typeof endpoint !== 'string' || endpoint === '') throw new DecisionError('invalid_request', 'endpoint is required')
+    await this.engine.cloud.checkEndpoint(await this.engine.cloud.resolveModel(typeof model === 'string' ? model : this.settings.engine().cloudModel), endpoint)
+  }
+
+  /** Time five real judgements of a sample call on one endpoint. */
+  async requestTest(endpoint: unknown, input: unknown): Promise<TestResult> {
+    if (typeof endpoint !== 'string' || endpoint === '') throw new DecisionError('invalid_request', 'endpoint is required')
+    if (typeof input !== 'object' || input === null) throw new DecisionError('invalid_request', 'input is required')
+    const model = await this.engine.cloud.resolveModel(this.settings.engine().cloudModel)
+    return await this.engine.cloud.requestTest(model, endpoint, input as TestInput)
+  }
+
+  installPack(pack: string | null, source: string | null): Job {
+    if (!isPackId(pack)) throw new DecisionError('invalid_request', `pack must be one of ${PACK_IDS.join(', ')}`)
+    const from = this.source(source)
+    return this.run('pack', pack, signal => installPack(this.home, pack, {
+      source: from, signal,
+      onProgress: progress => this.update(progress.phase === 'download'
+        ? { phase: 'download', done: progress.done, total: progress.total }
+        : { phase: progress.phase }),
+    }))
+  }
+
+  removePack(pack: string | null): boolean {
+    if (!isPackId(pack)) throw new DecisionError('invalid_request', `pack must be one of ${PACK_IDS.join(', ')}`)
+    this.assertIdle()
+    // A running worker of this pack holds files open.
+    if (this.engine.local.status().selection?.pack === pack) this.engine.local.stop()
+    return removePack(this.home, pack)
+  }
+
+  downloadModel(family: string | null, source: string | null): Job {
+    if (!(MODEL_FAMILIES as readonly (string | null)[]).includes(family)) throw new DecisionError('invalid_request', `model must be one of ${MODEL_FAMILIES.join(', ')}`)
+    if (!(MODEL_SOURCES as readonly (string | null)[]).includes(source)) throw new DecisionError('invalid_request', `source must be one of ${MODEL_SOURCES.join(', ')}`)
+    const model = MODEL_CATALOG.find(entry => entry.family === family)!
+    const precision = preferredPrecision(model, recommend(detectHardware()).onnxPack)
+    if (precision === undefined) throw new DecisionError('invalid_request', `${model.family} has no published package`)
+    return this.run('model-download', family!, signal => downloadModel(this.home, model.family, precision, source as ModelSource, {
+      signal,
+      onProgress: (done, total) => this.update({ phase: 'download', done, total }),
+    }))
+  }
+
+  installModelDirectory(dir: unknown): Job {
+    if (typeof dir !== 'string' || dir.trim() === '') throw new DecisionError('invalid_request', 'dir must name a model package directory')
+    return this.run('model-directory', dir, signal => installModelFromDirectory(this.home, dir.trim(), {
+      signal,
+      onProgress: (done, total) => this.update({ phase: 'verify', done, total }),
+    }))
+  }
+
+  removeModel(id: string | null): boolean {
+    if (id === null || id === '') throw new DecisionError('invalid_request', 'id is required')
+    this.assertIdle()
+    if (this.engine.local.status().selection?.model === id) this.engine.local.stop()
+    return removeModel(this.home, id)
+  }
+
+  cancelJob(): void {
+    this.jobAbort?.abort(new DecisionError('invalid_request', 'cancelled'))
+  }
+
+  /** Judge a sample call with the saved settings, so the user sees the backend answer. */
+  async test(tool: unknown, args: unknown): Promise<Verdict> {
+    if (typeof tool !== 'string' || tool === '' || typeof args !== 'object' || args === null || Array.isArray(args)) {
+      throw new DecisionError('invalid_request', 'tool must be a name and args an object')
+    }
+    return await this.engine.judge({ tool, arguments: args as Record<string, unknown> }, this.settings.engine())
+  }
+
+  /** One page of the decision log, newest first. */
+  recordPage(url: URL): RecordPage {
+    const param = (name: string) => {
+      const value = url.searchParams.get(name)
+      return value === null || value === '' ? undefined : value
+    }
+    const limit = Number(param('limit') ?? PAGE_LIMIT_MAX)
+    if (!Number.isFinite(limit)) throw new DecisionError('invalid_request', 'limit must be a number')
+    const label = param('label')
+    const workspace = param('workspace')
+    const before = param('before')
+    return logged(() => this.records.page({
+      limit,
+      ...label === undefined ? {} : { label },
+      ...workspace === undefined ? {} : { workspace },
+      ...before === undefined ? {} : { before },
+      markedOnly: param('marked') === '1',
+    }))
+  }
+
+  /** Mark the label a record should have had, or clear the mark with null. */
+  markRecord(id: unknown, correction: unknown): DecisionRecord {
+    if (typeof id !== 'string' || id === '') throw new DecisionError('invalid_request', 'id is required')
+    if (correction !== null && !(DECISIONS as readonly unknown[]).includes(correction)) {
+      throw new DecisionError('invalid_request', `correction must be null or one of ${DECISIONS.join(', ')}`)
+    }
+    return logged(() => this.records.mark(id, correction as Decision | null))
+  }
+
+  exportRecords(): RecordExport {
+    return logged(() => this.records.export())
+  }
+
+  clearRecords(): void {
+    this.records.clear()
+  }
+
+  close(): void {
+    this.cancelJob()
+  }
+
+  private source(value: string | null): DownloadSource {
+    if (value === null) return this.settings.downloadSource()
+    if (!(DOWNLOAD_SOURCES as readonly string[]).includes(value)) throw new DecisionError('invalid_request', `source must be one of ${DOWNLOAD_SOURCES.join(', ')}`)
+    return value as DownloadSource
+  }
+
+  private assertIdle(): void {
+    if (this.running()) throw new DecisionError('invalid_request', 'another install is running')
+  }
+
+  private running(): boolean {
+    return this.job !== undefined && !['done', 'failed', 'cancelled'].includes(this.job.phase)
+  }
+
+  private run(kind: Job['kind'], target: string, work: (signal: AbortSignal) => Promise<unknown>): Job {
+    this.assertIdle()
+    const abort = new AbortController()
+    this.jobAbort = abort
+    this.job = { kind, target, phase: kind === 'model-directory' ? 'verify' : 'download', startedAt: Date.now() }
+    const job = this.job
+    work(abort.signal).then(() => {
+      this.finish(job, { phase: 'done' })
+    }, (error: unknown) => {
+      this.finish(job, abort.signal.aborted ? { phase: 'cancelled' } : { phase: 'failed', error: messageOf(error) })
+    })
+    return job
+  }
+
+  private update(change: Pick<Job, 'phase'> & Partial<Pick<Job, 'done' | 'total'>>): void {
+    if (this.job !== undefined && this.running()) this.job = { ...this.job, ...change }
+  }
+
+  private finish(started: Job, change: Pick<Job, 'phase'> & Partial<Pick<Job, 'error'>>): void {
+    if (this.job?.startedAt !== started.startedAt) return
+    const { done: _done, total: _total, ...rest } = this.job
+    this.job = { ...rest, ...change }
+    this.jobAbort = undefined
+  }
+}
+
+/** Fetch-shaped handler of one panel route. */
+type Handler = (panel: Panel, request: Request, url: URL) => Promise<unknown>
+
+/** Every panel route: method, path below {@link ROUTE_PREFIX}, handler. */
+export const ROUTES: readonly (readonly ['GET' | 'POST', string, Handler])[] = [
+  ['GET', 'state', panel => panel.state()],
+  ['GET', 'cloud/models', panel => panel.cloudModels()],
+  ['GET', 'cloud/endpoints', panel => panel.endpoints()],
+  ['POST', 'cloud/probe', panel => panel.probe()],
+  ['POST', 'cloud/check-lock', async (panel, request) => {
+    const body = await bodyOf(request)
+    return await panel.checkLock(body['model'], body['endpoint'])
+  }],
+  ['POST', 'cloud/test', async (panel, request) => {
+    const body = await bodyOf(request)
+    return await panel.requestTest(body['endpoint'], body['input'])
+  }],
+  ['POST', 'packs/install', async (panel, _request, url) => panel.installPack(url.searchParams.get('pack'), url.searchParams.get('source'))],
+  ['POST', 'packs/remove', async (panel, _request, url) => panel.removePack(url.searchParams.get('pack'))],
+  ['POST', 'models/download', async (panel, _request, url) => panel.downloadModel(url.searchParams.get('family'), url.searchParams.get('source'))],
+  ['POST', 'models/install-dir', async (panel, request) => panel.installModelDirectory((await bodyOf(request))['dir'])],
+  ['POST', 'models/remove', async (panel, _request, url) => panel.removeModel(url.searchParams.get('id'))],
+  ['POST', 'job/cancel', async panel => panel.cancelJob()],
+  ['POST', 'test', async (panel, request) => {
+    const body = await bodyOf(request)
+    return await panel.test(body['tool'], body['args'])
+  }],
+  ['GET', 'records', async (panel, _request, url) => panel.recordPage(url)],
+  ['POST', 'records/mark', async (panel, request) => {
+    const body = await bodyOf(request)
+    return panel.markRecord(body['id'], body['correction'])
+  }],
+  ['POST', 'records/export', async panel => panel.exportRecords()],
+  ['POST', 'records/clear', async panel => panel.clearRecords()],
+]
+
+/** Answer one panel request; failures carry their code, never a stack. */
+export async function handle(panel: Panel, handler: Handler, request: Request): Promise<Response> {
+  try {
+    const value = await handler(panel, request, new URL(request.url))
+    return Response.json({ ok: true, value: value ?? null }, { headers: { 'cache-control': 'no-store' } })
+  } catch (error) {
+    const code = error instanceof DecisionError ? error.code : 'failed'
+    const status = code === 'invalid_request' ? 400 : code === 'not_signed_in' ? 401 : code === 'rate_limited' ? 429 : 500
+    return Response.json({ ok: false, error: { code, message: messageOf(error) } }, { status, headers: { 'cache-control': 'no-store' } })
+  }
+}
+
+async function bodyOf(request: Request): Promise<Record<string, unknown>> {
+  const value: unknown = await request.json().catch(() => undefined)
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new DecisionError('invalid_request', 'the body must be a JSON object')
+  return value as Record<string, unknown>
+}
+
+/** A decision log call; a record or filter the log does not know is the caller's mistake. */
+function logged<T>(work: () => T): T {
+  try {
+    return work()
+  } catch (error) {
+    if (error instanceof RangeError) throw new DecisionError('invalid_request', error.message)
+    throw error
+  }
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}

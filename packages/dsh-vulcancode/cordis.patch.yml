@@ -1,0 +1,13 @@
+- insert:
+    - id: dsh-vulcancode
+      name: cordis:group
+      group: true
+      config:
+        - id: openvulcan-account
+          name: '@openvulcan/dsh-vulcan-account'
+        - id: vulcan-decision-guard
+          name: '@openvulcan/dsh-decision-guard'
+        - id: vulcan-style
+          name: '@openvulcan/dsh-vulcan-style'
+        - id: vulcan-answers
+          name: '@openvulcan/dsh-vulcan-answers'

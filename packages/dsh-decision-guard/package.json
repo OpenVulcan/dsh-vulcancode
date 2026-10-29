@@ -1,0 +1,95 @@
+{
+  "name": "@openvulcan/dsh-decision-guard",
+  "version": "0.4.0",
+  "description": "Vulcan Decision permission guard for DeepSeek Harness: every tool call is judged before it runs.",
+  "license": "MIT",
+  "icon": "./assets/openvulcan-icon.svg",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OpenVulcan/dsh-vulcancode.git",
+    "directory": "packages/dsh-decision-guard"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "!lib/**/*.test.*",
+    "assets"
+  ],
+  "scripts": {
+    "build": "node -e \"for (const d of ['lib','build/client']) fs.rmSync(d,{recursive:true,force:true})\" && tsc -p tsconfig.json && tsc -p tsconfig.client.json && node scripts/bundle-client.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
+    "test": "tsc -p tsconfig.json && node --test \"lib/**/*.test.js\""
+  },
+  "engines": {
+    "dsh": ">=0.2.1-rc.2 <0.3.0"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-plugin-manager",
+        "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-settings-general"
+      ]
+    }
+  },
+  "dependencies": {
+    "@openvulcan/vulcan-decision": "workspace:*"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.5",
+    "@deepseek-ai/dsh-agent": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-client-connection": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-commands": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-home-paths": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-llm": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-permission-presets": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-session": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-session-projection": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-settings": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-tools": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-user-approval": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-working-directory": "^0.2.1-rc.2",
+    "@deepseek-ai/schemastery": "^3.18.5"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.5",
+    "@deepseek-ai/cordis-plugin-loader": "1.0.6",
+    "@deepseek-ai/dsh-agent": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-client-connection": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-commands": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-home-paths": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-llm": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-permission-presets": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-session": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-session-projection": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-settings": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-user-approval": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-working-directory": "0.2.1-rc.2",
+    "@deepseek-ai/schemastery": "3.18.5",
+    "@openvulcan/dsh-vulcan-account": "workspace:*",
+    "@types/node": "^24.0.0",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "typescript": "^5.9.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

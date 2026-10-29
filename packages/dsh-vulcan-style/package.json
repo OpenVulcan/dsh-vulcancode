@@ -1,0 +1,64 @@
+{
+  "name": "@openvulcan/dsh-vulcan-style",
+  "version": "0.4.0",
+  "description": "The VulcanCode look for DeepSeek Harness: Vulcan light, dark and command themes with square corners.",
+  "license": "MIT",
+  "icon": "./assets/openvulcan-icon.svg",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OpenVulcan/dsh-vulcancode.git",
+    "directory": "packages/dsh-vulcan-style"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "!lib/**/*.test.*",
+    "assets"
+  ],
+  "scripts": {
+    "build": "node -e \"for (const d of ['lib','build/client']) fs.rmSync(d,{recursive:true,force:true})\" && tsc -p tsconfig.json && tsc -p tsconfig.client.json && node scripts/bundle-client.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
+    "test": "tsc -p tsconfig.json && tsc -p tsconfig.client.json && node --test \"lib/**/*.test.js\""
+  },
+  "engines": {
+    "dsh": ">=0.2.1-rc.2 <0.3.0"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-plugin-manager",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-settings-general",
+        "@deepseek-ai/dsh-client-ui-theme"
+      ]
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.5",
+    "@deepseek-ai/schemastery": "^3.18.5"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.5",
+    "@deepseek-ai/schemastery": "3.18.5",
+    "@types/node": "^24.0.0",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "typescript": "^5.9.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

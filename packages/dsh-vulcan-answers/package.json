@@ -1,0 +1,82 @@
+{
+  "name": "@openvulcan/dsh-vulcan-answers",
+  "version": "0.4.0",
+  "description": "Interactive answers for DeepSeek Harness: the model answers with VulcanCode ui-* components, rendered in the chat.",
+  "license": "MIT",
+  "icon": "./assets/openvulcan-icon.svg",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OpenVulcan/dsh-vulcancode.git",
+    "directory": "packages/dsh-vulcan-answers"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "!lib/**/*.test.*",
+    "assets"
+  ],
+  "scripts": {
+    "build": "node -e \"for (const d of ['lib','build/client']) fs.rmSync(d,{recursive:true,force:true})\" && tsc -p tsconfig.json && node scripts/bundle-client.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
+    "test": "tsc -p tsconfig.json && node --test \"lib/**/*.test.js\""
+  },
+  "engines": {
+    "dsh": ">=0.2.1-rc.2 <0.3.0"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-chat",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-plugin-manager",
+        "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-settings-general"
+      ]
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.5",
+    "@deepseek-ai/dsh-commands": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-session": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-session-projection": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-settings": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-system-prompt": "^0.2.1-rc.2",
+    "@deepseek-ai/schemastery": "^3.18.5"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.5",
+    "@deepseek-ai/dsh-commands": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-session": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-session-projection": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-settings": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-system-prompt": "0.2.1-rc.2",
+    "@deepseek-ai/schemastery": "3.18.5",
+    "@types/node": "^24.0.0",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "typescript": "^5.9.0",
+    "esbuild": "^0.25.0",
+    "lucide-react": "0.577.0",
+    "katex": "0.16.47",
+    "dagre-d3-es": "7.0.14",
+    "@types/katex": "^0.16.7"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

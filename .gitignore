@@ -1,2 +1,20 @@
 # Design drafts and plans stay local; docs/ holds public documentation only.
 /design/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Build outputs
+/dist/
+/packages/*/lib/
+/packages/*/build/
+
+# Model packages are installed separately, never committed
+*.onnx
+*.onnx.data
+
+# Local environment
+.env
+.env.*
+.DS_Store

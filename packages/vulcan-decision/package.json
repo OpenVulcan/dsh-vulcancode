@@ -1,0 +1,49 @@
+{
+  "name": "@openvulcan/vulcan-decision",
+  "version": "0.4.0",
+  "description": "Vulcan Decision: judge AI coding tool calls before they run, with OpenVulcan cloud endpoints or an optional local model runtime.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OpenVulcan/dsh-vulcancode.git",
+    "directory": "packages/vulcan-decision"
+  },
+  "type": "module",
+  "bin": {
+    "vulcan-decision": "bin/vulcan-decision.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./cli": "./lib/cli.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "!lib/**/*.test.*",
+    "python/*.py",
+    "runtime-packs/*.json",
+    "!runtime-packs/spec.json"
+  ],
+  "scripts": {
+    "build": "node -e \"fs.rmSync('lib',{recursive:true,force:true})\" && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsc -p tsconfig.json && node --test \"lib/**/*.test.js\""
+  },
+  "engines": {
+    "node": ">=20.19"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@openvulcan/openvulcan-account": "workspace:*"
+  }
+}
