@@ -35,6 +35,7 @@ This project is not affiliated with DeepSeek; dsh is a DeepSeek product.
 | Interactive answers | The model can answer with VulcanCode's `ui-*` components, rendered in the chat; on by default once enabled, and can be turned off per session |
 | LuaSkills | Skills as tools for the AI, with the default skill codekit (code navigation). The runtime (about 190 MB) is installed on demand from Settings › LuaSkills and connects on its own once installed. The LuaSkills page in the sidebar manages installed skills and the LuaSkills Hub |
 | Vulcan look | VulcanCode's themes, square corners and colors |
+| Long-term memory | VulcanCode's Markdown long-term memory: the AI keeps your profile, space memory and project memory with `memory_outline`, `memory_search` and `memory_write`, and a snapshot is injected when each session starts. The Long-term memory page in the sidebar edits it, sets the injection budget, and imports and exports |
 
 > **Our commitment: the cloud command decision model is free, permanently.** (October 27, 2026)
 
@@ -44,7 +45,7 @@ This project is not affiliated with DeepSeek; dsh is a DeepSeek product.
 2. Open Settings › Auto approval, then choose "Auto review" in the permission picker or switch the integration
    to "Standalone switch". Without signing in, you can judge with a local model instead.
 3. For LuaSkills, open Settings › LuaSkills and install the runtime; progress shows on the page, and the skill tools appear when it finishes.
-4. Interactive answers and the look work once installed; adjust them in their own settings.
+4. Interactive answers, the look and long-term memory work once installed; adjust them in their own settings or sidebar page.
 
 ## Limits of auto approval
 
@@ -65,6 +66,7 @@ This project is not affiliated with DeepSeek; dsh is a DeepSeek product.
 | `@openvulcan/dsh-vulcan-answers` | The interactive answers plugin |
 | `@openvulcan/dsh-vulcan-luaskills` | The LuaSkills plugin: runtime install, skill tools, VM settings and the Hub |
 | `@openvulcan/dsh-vulcan-style` | The look plugin |
+| `@openvulcan/dsh-vulcan-memory` | The long-term memory plugin: memory tools, the session snapshot, the memory-curator skill and the memory page |
 | `@openvulcan/vulcan-decision` | The decision engine and the `vulcan-decision` command line |
 | `@openvulcan/openvulcan-account` | The OpenVulcan account library: sign-in, refresh and the credential store interface |
 
