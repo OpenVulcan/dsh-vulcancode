@@ -124,7 +124,9 @@ function ComponentView({ host, hub, anchor, language, meta, body, component }: F
             <li data-status={item.status} key={index}>
               <span aria-hidden="true" className="vda-status" data-status={item.status}>{STATUS_SYMBOLS[item.status]}</span>
               <span>{item.item}</span>
-              {item.note ? <small>{item.note}</small> : null}
+              {item.note || item.location
+                ? <small>{item.note}{item.location ? <> <code className="vda-path">{item.location}</code></> : null}</small>
+                : null}
             </li>
           ))}
         </ul>
@@ -178,7 +180,9 @@ function ComponentView({ host, hub, anchor, language, meta, body, component }: F
             {component.files.map((file, index) => (
               <li key={index}>
                 <span className="vda-files-path"><code className="vda-path">{file.path}</code>{file.note ? <small>{file.note}</small> : null}</span>
-                {file.added !== undefined ? <LineDelta added={file.added} removed={file.removed ?? 0} /> : null}
+                {file.added !== undefined || file.removed !== undefined
+                  ? <LineDelta added={file.added} removed={file.removed} />
+                  : file.status ? <span className="vda-badge">{file.status}</span> : null}
               </li>
             ))}
           </ul>
@@ -253,11 +257,12 @@ function tonedMarkdown(value: AnswerTonedText): string {
   return [symbol, value.text].filter(Boolean).join(' ')
 }
 
-/** Added and removed line counts. */
-function LineDelta({ added, removed }: { added: number; removed: number }) {
+/** Added and removed line counts; a side a file row did not state is left out. */
+function LineDelta({ added, removed }: { added?: number | undefined; removed?: number | undefined }) {
   return (
     <span className="vda-delta">
-      <span className="vda-add">+{formatNumber(added)}</span><span className="vda-del">−{formatNumber(removed)}</span>
+      {added !== undefined ? <span className="vda-add">+{formatNumber(added)}</span> : null}
+      {removed !== undefined ? <span className="vda-del">−{formatNumber(removed)}</span> : null}
     </span>
   )
 }

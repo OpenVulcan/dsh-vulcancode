@@ -114,7 +114,8 @@ body[data-ds-dark-theme] :is(.vda, .vda-mode) {${DARK_TOKENS}}
 .vda-path { padding: 0 calc(var(--vk-u) * 1.5); border: 1px solid var(--vk-line-soft); background: var(--vk-code-bg); color: var(--vk-ink); font-family: var(--vk-font-mono); font-size: var(--vk-fs-sm); overflow-wrap: anywhere; }
 .vda-delta { font-family: var(--vk-font-mono); font-size: var(--vk-fs-sm); font-weight: 600; white-space: nowrap; }
 .vda-delta > .vda-add { color: var(--vk-ok); }
-.vda-delta > .vda-del { margin-inline-start: calc(var(--vk-u) * 1.5); color: var(--vk-bad); }
+.vda-delta > .vda-del { color: var(--vk-bad); }
+.vda-delta > .vda-add + .vda-del { margin-inline-start: calc(var(--vk-u) * 1.5); }
 
 /* ---------- Metrics ---------- */
 .vda-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr)); gap: calc(var(--vk-u) * 2); }

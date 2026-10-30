@@ -104,14 +104,42 @@ describe('parseAnswerComponent', () => {
     })
     matches(parse('ui-math', '\\begin{aligned}\na &= b \\\\\n&= c\n\\end{aligned}'), { equations: ['\\begin{aligned}\na &= b \\\\\n&= c\n\\end{aligned}'] })
     matches(parse('ui-math', '|x| = 1'), { equations: ['|x| = 1'], symbols: [] })
-    assert.equal(parse('ui-math', 'x = 1\n\nx'), null)
+    // Lines after the blank line are further formulas when none is a legend row; a mix is invalid.
+    matches(parse('ui-math', 'r = a\n\nr = b'), { equations: ['r = a', 'r = b'], symbols: [] })
+    assert.equal(parse('ui-math', 'x = 1\n\nx | ok\ny'), null)
   })
 
-  test('sums file deltas and rejects a third cell without a delta', () => {
+  test('sums file deltas, one-sided counts and change labels', () => {
     matches(parse('ui-files', 'a.rs | +9 -2 | note\nb.rs | +1 −0\nc.md | only a note'), {
       kind: 'files', added: 10, removed: 2, files: [{ added: 9, note: 'note' }, { removed: 0 }, { note: 'only a note' }],
     })
-    assert.equal(parse('ui-files', 'a.rs | changed | note'), null)
+    matches(parse('ui-files', 'a.ts | +145 | entry\nb.ts | -3\nc.ts | new | id'), {
+      kind: 'files', added: 145, removed: 3, files: [
+        { added: 145, removed: undefined, note: 'entry' },
+        { added: undefined, removed: 3 },
+        { status: 'new', note: 'id', added: undefined },
+      ],
+    })
+  })
+
+  test('reads a lone non-numeric third metric cell as a unit and empty maximum or unit cells as absent', () => {
+    matches(parse('ui-metrics', 'Scan | 10.9 | s'), { rows: [{ value: '10.9', unit: 's', maximum: undefined }] })
+    matches(parse('ui-metrics', 'Raw | 506 s | | | no\nSize | 0.96 | | MB | ok\nCoverage | 81 | 100 | | ok'), {
+      rows: [
+        { value: '506 s', unit: undefined, maximum: undefined, tone: 'no' },
+        { value: '0.96', unit: 'MB', maximum: undefined, tone: 'ok' },
+        { numeric: 81, maximum: 100, unit: undefined, tone: 'ok' },
+      ],
+    })
+    assert.equal(parse('ui-metrics', ' | 80'), null)
+    assert.equal(parse('ui-metrics', 'Label | '), null)
+  })
+
+  test('accepts a path-shaped fourth checklist cell as its location only', () => {
+    matches(parse('ui-checklist', 'no | item | note | src/a.rs:150'), {
+      items: [{ status: 'no', item: 'item', note: 'note', location: 'src/a.rs:150' }],
+    })
+    assert.equal(parse('ui-checklist', 'no | item | note | more prose'), null)
   })
 
   test('parses compare matrices with tone cells and requires matching widths', () => {
