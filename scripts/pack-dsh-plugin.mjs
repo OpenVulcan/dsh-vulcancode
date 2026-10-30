@@ -1,8 +1,9 @@
 // Pack the VulcanCode suite as one self-contained tarball: the @openvulcan/dsh-vulcancode bundle
 // with every workspace package it reaches (the plugins, the decision engine and the account
 // library) inside it as bundled dependencies, so `dsh plugin add` installs a single package and
-// never looks one of them up in a registry. Run after `pnpm -r run build`; writes
-// dist/<name>-<version>.tgz.
+// never looks one of them up in a registry. pnpm does not install the dependencies of bundled
+// packages, so their registry dependencies become the suite's own: the bundled copies resolve them
+// from the suite's node_modules. Run after `pnpm -r run build`; writes dist/<name>-<version>.tgz.
 
 import { execSync } from 'node:child_process'
 import fs from 'node:fs'
@@ -79,6 +80,18 @@ for (const name of bundled) {
   if (version !== suite.manifest.version) throw new Error(`${name} is at ${version}, the suite at ${suite.manifest.version}; release them together`)
 }
 
+/** The registry dependencies of the bundled packages, which the suite installs on their behalf. */
+const registry = {}
+for (const name of bundled) {
+  for (const [dependency, range] of Object.entries(workspace.get(name).manifest.dependencies ?? {})) {
+    if (workspace.has(dependency)) continue
+    if (registry[dependency] !== undefined && registry[dependency] !== range) {
+      throw new Error(`${dependency} is wanted as ${registry[dependency]} and as ${range} (by ${name}); align the ranges`)
+    }
+    registry[dependency] = range
+  }
+}
+
 fs.rmSync(STAGE, { recursive: true, force: true })
 fs.mkdirSync(STAGE, { recursive: true })
 
@@ -87,7 +100,7 @@ if (fs.existsSync(path.join(ROOT, 'README.md'))) fs.copyFileSync(path.join(ROOT,
 // Everything the suite reaches lives in its node_modules, so every bundled package resolves the others there.
 fs.writeFileSync(path.join(STAGE, 'package.json'), `${JSON.stringify({
   ...manifest,
-  dependencies: { ...manifest.dependencies, ...Object.fromEntries(bundled.map(name => [name, workspace.get(name).manifest.version])) },
+  dependencies: { ...manifest.dependencies, ...registry, ...Object.fromEntries(bundled.map(name => [name, workspace.get(name).manifest.version])) },
   bundleDependencies: bundled,
 }, null, 2)}\n`)
 for (const name of bundled) {
