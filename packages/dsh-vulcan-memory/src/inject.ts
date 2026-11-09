@@ -30,13 +30,6 @@ export const injectionStateSchema = z.object({
 
 export type InjectionState = z.infer<typeof injectionStateSchema>
 
-declare module '@deepseek-ai/dsh-session-projection/types' {
-  interface SessionProjectionStateMap {
-    /** Whether this session's model currently sees a memory snapshot. */
-    vulcanMemory: InjectionState
-  }
-}
-
 export const INITIAL_STATE: InjectionState = { injectedSeq: null, compacted: false }
 
 /** Fold one session event into the injection state. */

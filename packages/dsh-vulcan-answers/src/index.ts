@@ -43,10 +43,10 @@ function assembledSession(context: AssembleContext): Session | undefined {
   return (context as AssembleContext & { agent?: { session: Session } }).agent?.session
 }
 
-export function apply(ctx: Context, config: Config): void {
+export async function apply(ctx: Context, config: Config): Promise<void> {
   const texts = loadAnswerModeTexts()
   const defaultMode = (): AnswerMode => config.defaultMode.get()
-  const read = installSessionState(ctx, defaultMode)
+  const read = await installSessionState(ctx, defaultMode)
 
   ctx.systemPrompt.context({
     name: CONTEXT_NAME,

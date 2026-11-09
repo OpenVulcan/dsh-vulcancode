@@ -10,7 +10,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-commands'
 import { CommandDefinitionId } from '@deepseek-ai/dsh-commands/brand'
 import { appendPluginRecord, pluginRecordOf, type Session, type SessionEvent, type SessionHeader } from '@deepseek-ai/dsh-session'
-import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
+import type { ProjectionDefinition, ProjectionHandle } from '@deepseek-ai/dsh-session-projection'
 
 /** How the model answers in one session. */
 export type AnswerMode = 'standard' | 'interactive'
@@ -50,9 +50,6 @@ declare module '@deepseek-ai/dsh-session/types' {
 }
 
 declare module '@deepseek-ai/dsh-session-projection/types' {
-  interface SessionProjectionStateMap {
-    vulcanAnswers: AnswerSessionView
-  }
   interface SessionProjectionMap {
     /** Vulcan Answers' per-session mode for the composer pill. */
     vulcanAnswers: AnswerSessionView
@@ -94,7 +91,7 @@ const viewSchema = {
     }
     throw new TypeError('vulcanAnswers projection: expected { mode: "standard" | "interactive" | null, everInteractive: boolean, subagent: boolean }')
   },
-} as unknown as ProjectionDefinition<'vulcanAnswers'>['stateSchema']
+} as unknown as ProjectionDefinition<'vulcanAnswers', AnswerSessionView>['stateSchema']
 
 /**
  * Fold one event into the state. Records are validated because a restored record carries whatever an
@@ -114,10 +111,18 @@ export function applySessionRecord(state: AnswerSessionView, event: SessionEvent
 /** Reader of a session's mode state. */
 export type ReadAnswerState = (session: Session) => AnswerSessionView
 
-/** Register the projection and the command; returns the state reader. */
-export function installSessionState(ctx: Context, defaultMode: () => AnswerMode): ReadAnswerState {
+/**
+ * Whether an awaited registration is a dsh 0.2.2 handle. dsh 0.2.1 registers synchronously and
+ * awaiting its disposer yields a function; both are inside `engines.dsh`.
+ */
+function isHandle(value: unknown): value is ProjectionHandle<AnswerSessionView> {
+  return typeof value === 'object' && value !== null && typeof (value as { stateOf?: unknown }).stateOf === 'function'
+}
+
+/** Register the projection and the command; resolves to the state reader. */
+export async function installSessionState(ctx: Context, defaultMode: () => AnswerMode): Promise<ReadAnswerState> {
   const projections = ctx.sessionProjections
-  projections.register<'vulcanAnswers', AnswerSessionView>({
+  const registered: unknown = await projections.register<'vulcanAnswers', AnswerSessionView>({
     key: PROJECTION_KEY,
     stateVersion: 1,
     stateSchema: viewSchema,
@@ -125,7 +130,10 @@ export function installSessionState(ctx: Context, defaultMode: () => AnswerMode)
     apply: applySessionRecord,
     wire: { viewSchema, view: state => state },
   })
-  const read: ReadAnswerState = session => projections.stateOf(session, PROJECTION_KEY) ?? initialView(session.header)
+  const read: ReadAnswerState = isHandle(registered)
+    ? session => registered.stateOf(session)
+    // dsh 0.2.1 serves states by key only.
+    : session => (projections.stateOf(session, PROJECTION_KEY) as AnswerSessionView | undefined) ?? initialView(session.header)
 
   ctx.inject(['commands'], (child) => {
     child.commands.register({

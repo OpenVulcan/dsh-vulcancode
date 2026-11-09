@@ -223,7 +223,7 @@ interface Settled {
 }
 
 /** Install the Vulcan Decision gate and, in `auto-preset` mode, the Auto preset. */
-export function apply(ctx: Context, config: Config): void {
+export async function apply(ctx: Context, config: Config): Promise<void> {
   // Retain the injected services while this context drains on disposal.
   const permissionPresets = ctx.permissionPresets
   const sessions = ctx.sessions
@@ -237,7 +237,7 @@ export function apply(ctx: Context, config: Config): void {
   let releasing = false
   let ownsAuto = false
 
-  const sessionState = installSessionState(ctx)
+  const sessionState = await installSessionState(ctx)
   const records = new RecordStore(engine.home)
 
   /** Append one finished call off the gate's path; a failure is only logged. */

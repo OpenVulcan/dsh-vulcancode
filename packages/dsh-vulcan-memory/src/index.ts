@@ -21,11 +21,12 @@ import type {} from '@deepseek-ai/dsh-client-connection'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-plan-mode'
+import type { ProjectionHandle } from '@deepseek-ai/dsh-session-projection'
 import type { BUNDLED_SKILL_RANK, SkillCandidate, SkillProvider } from '@deepseek-ai/dsh-skill'
 import type { PreToolDecision, ToolDefinition } from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-workspace'
 
-import { INITIAL_STATE, PROJECTION_KEY, SOURCE_KIND, applyEvent, injectionStateSchema, isSubagent, renderMemoryBlock } from './inject.js'
+import { INITIAL_STATE, PROJECTION_KEY, SOURCE_KIND, applyEvent, injectionStateSchema, isSubagent, renderMemoryBlock, type InjectionState } from './inject.js'
 import { MemoryError } from './markdown/errors.js'
 import * as markdown from './markdown/index.js'
 import * as page from './page.js'
@@ -50,7 +51,7 @@ const OUTPUT: ToolDefinition['output'] = {
   render: (_args, value) => [{ type: 'text', text: (value as { content: string }).content }],
 }
 
-export function apply(ctx: Context): void {
+export async function apply(ctx: Context): Promise<void> {
   const memoryDirectory = path.join(resolveDshHome(), 'vulcan-memory')
   const store = new markdown.MarkdownMemoryStore(memoryDirectory)
   const guide = readFileSync(path.join(ASSETS, 'markdown-memory-guide.md'), 'utf8')
@@ -91,19 +92,25 @@ export function apply(ctx: Context): void {
     return next()
   })
 
-  ctx.sessionProjections.register({
+  const projections = ctx.sessionProjections
+  const registered: unknown = await projections.register<typeof PROJECTION_KEY, InjectionState>({
     key: PROJECTION_KEY,
     stateVersion: 1,
     stateSchema: injectionStateSchema,
     init: () => INITIAL_STATE,
     apply: applyEvent,
   })
+  /** Whether this session's model currently sees a memory snapshot. */
+  const injectionState: (session: Agent['session']) => InjectionState = isHandle(registered)
+    ? session => registered.stateOf(session)
+    // dsh 0.2.1 serves states by key only.
+    : session => (projections.stateOf(session, PROJECTION_KEY) as InjectionState | undefined) ?? INITIAL_STATE
 
   ctx.on('agent/pre-step', async ({ agent, signal }, next) => {
     const decision = await next()
     if (decision.kind === 'reject' || signal.aborted) return decision
     if (isSubagent(agent.session.header)) return decision
-    const state = ctx.sessionProjections.stateOf(agent.session, PROJECTION_KEY) ?? INITIAL_STATE
+    const state = injectionState(agent.session)
     if (state.injectedSeq !== null) return decision
     let text: string
     try {
@@ -188,6 +195,14 @@ export function apply(ctx: Context): void {
 
 /** Fetch-shaped handler of one page route. */
 type Handler = (request: Request, url: URL) => Promise<unknown>
+
+/**
+ * Whether an awaited registration is a dsh 0.2.2 handle. dsh 0.2.1 registers synchronously and
+ * awaiting its disposer yields a function; both are inside `engines.dsh`.
+ */
+function isHandle(value: unknown): value is ProjectionHandle<InjectionState> {
+  return typeof value === 'object' && value !== null && typeof (value as { stateOf?: unknown }).stateOf === 'function'
+}
 
 /** Group route rows by path; dsh dispatches only the methods registered for a path. */
 export function groupRoutes(

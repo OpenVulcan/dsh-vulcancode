@@ -10,7 +10,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-commands'
 import { CommandDefinitionId } from '@deepseek-ai/dsh-commands/brand'
 import { appendPluginRecord, pluginRecordOf, type Session, type SessionEvent } from '@deepseek-ai/dsh-session'
-import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
+import type { ProjectionDefinition, ProjectionHandle } from '@deepseek-ai/dsh-session-projection'
 
 /** Record type of one switch of the unattended state. */
 export const UNATTENDED_RECORD = 'plugin:vulcan-decision-guard/unattended'
@@ -63,9 +63,6 @@ declare module '@deepseek-ai/dsh-session/types' {
 }
 
 declare module '@deepseek-ai/dsh-session-projection/types' {
-  interface SessionProjectionStateMap {
-    vulcanDecision: GuardSessionView
-  }
   interface SessionProjectionMap {
     /** Vulcan Decision's per-session state for the composer controls. */
     vulcanDecision: GuardSessionView
@@ -89,7 +86,7 @@ const viewSchema = {
     }
     throw new TypeError('vulcanDecision projection: expected { unattended: boolean, denyPolicy: string, reviewPrompt: string | null }')
   },
-} as unknown as ProjectionDefinition<'vulcanDecision'>['stateSchema']
+} as unknown as ProjectionDefinition<'vulcanDecision', GuardSessionView>['stateSchema']
 
 /**
  * Fold one event into the state. Records are validated because a restored record carries whatever
@@ -123,10 +120,18 @@ function splitInput(rawInput: string): { word: string; rest: string } {
   return { word: match[1]!.toLowerCase(), rest: match[2]!.trim() }
 }
 
-/** Register the projection and the commands; returns the reader the gate uses. */
-export function installSessionState(ctx: Context): (session: Session) => GuardSessionView {
+/**
+ * Whether an awaited registration is a dsh 0.2.2 handle. dsh 0.2.1 registers synchronously and
+ * awaiting its disposer yields a function; both are inside `engines.dsh`.
+ */
+function isHandle(value: unknown): value is ProjectionHandle<GuardSessionView> {
+  return typeof value === 'object' && value !== null && typeof (value as { stateOf?: unknown }).stateOf === 'function'
+}
+
+/** Register the projection and the commands; resolves to the reader the gate uses. */
+export async function installSessionState(ctx: Context): Promise<(session: Session) => GuardSessionView> {
   const projections = ctx.sessionProjections
-  projections.register<'vulcanDecision', GuardSessionView>({
+  const registered: unknown = await projections.register<'vulcanDecision', GuardSessionView>({
     key: PROJECTION_KEY,
     stateVersion: 2,
     stateSchema: viewSchema,
@@ -134,7 +139,10 @@ export function installSessionState(ctx: Context): (session: Session) => GuardSe
     apply: applySessionRecord,
     wire: { viewSchema, view: state => state },
   })
-  const read = (session: Session): GuardSessionView => projections.stateOf(session, PROJECTION_KEY) ?? INITIAL
+  const read = isHandle(registered)
+    ? (session: Session): GuardSessionView => registered.stateOf(session)
+    // dsh 0.2.1 serves states by key only.
+    : (session: Session): GuardSessionView => (projections.stateOf(session, PROJECTION_KEY) as GuardSessionView | undefined) ?? INITIAL
   // UTF-16 length, as the configuration schema counts it.
   const tooLong = (text: string): boolean => text.length > MAX_PROMPT_CHARS
 
