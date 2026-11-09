@@ -40,7 +40,7 @@ export function FenceView(props: FenceProps) {
   )
 }
 
-const SEVERITY_KEYS = { high: 'severity.high', medium: 'severity.medium', low: 'severity.low', info: 'severity.info' } as const
+const SEVERITY_KEYS = { high: 'severity.high', medium: 'severity.medium', low: 'severity.low', info: 'severity.info', ok: 'severity.ok' } as const
 const STATUS_SYMBOLS = { ok: '✓', no: '✗', warn: '!', todo: '' } as const
 const CALLOUT_ICONS = { info: Info, success: CircleCheck, warning: TriangleAlert, danger: CircleX } as const
 const TONE_ICONS = { ok: CircleCheck, warn: CircleAlert, no: CircleX } as const
@@ -52,7 +52,10 @@ function ComponentView({ host, hub, anchor, language, meta, body, component }: F
       return (
         <dl className="vda-kv">
           {component.rows.map((row, index) => (
-            <Fragment key={index}><dt>{row.label}</dt><dd>{row.value}</dd></Fragment>
+            <Fragment key={index}>
+              <dt>{row.label}</dt>
+              <dd>{row.value}{row.note ? <span className="vda-kv-note">{row.note}</span> : null}</dd>
+            </Fragment>
           ))}
         </dl>
       )
@@ -75,7 +78,8 @@ function ComponentView({ host, hub, anchor, language, meta, body, component }: F
     case 'findings': {
       const header = ['#', t('column.severity'), t('column.finding'), t('column.location')]
       const severity = (value: AnswerSeverity) => t(SEVERITY_KEYS[value])
-      const copy = markdownTable(header, component.rows.map((row, index) => [String(index + 1), severity(row.severity), row.text, row.location ?? '']))
+      const finding = (row: { text: string; note?: string | undefined }) => row.note ? `${row.text} — ${row.note}` : row.text
+      const copy = markdownTable(header, component.rows.map((row, index) => [String(index + 1), severity(row.severity), finding(row), row.location ?? '']))
       const located = component.rows.some((row) => row.location)
       return (
         <Frame copy={copy} host={host}>
@@ -87,7 +91,7 @@ function ComponentView({ host, hub, anchor, language, meta, body, component }: F
                   <tr key={index}>
                     <td className="vda-table-index">{index + 1}</td>
                     <td><span className="vda-badge" data-tone={row.severity}>{severity(row.severity)}</span></td>
-                    <td>{row.text}</td>
+                    <td>{row.text}{row.note ? <small className="vda-finding-note">{row.note}</small> : null}</td>
                     {located ? <td>{row.location ? <code className="vda-path">{row.location}</code> : null}</td> : null}
                   </tr>
                 ))}

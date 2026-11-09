@@ -37,7 +37,7 @@ describe('parseAnswerComponent', () => {
   test('rejects unknown names, unsupported names and blank bodies', () => {
     assert.equal(parse('ui-unknown', 'a | b'), null)
     assert.equal(parse('ui-kv', '  \n '), null)
-    assert.equal(parse('ui-callout', 'body'), null)
+    assert.equal(parse('ui-callout', ' \n'), null)
     assert.equal(parse('ui-details', 'body'), null)
     assert.equal(parse('ui-code', 'src/a.rs:1-3'), null)
     assert.equal(parse('ui-gallery', 'a.png | caption'), null)
@@ -47,12 +47,21 @@ describe('parseAnswerComponent', () => {
     matches(parse('ui-kv Round trip', 'a | b'), { kind: 'kv', heading: 'Round trip', rows: [{ label: 'a', value: 'b' }] })
     assert.equal(parse('ui-kv', 'a | b')?.heading, undefined)
     assert.equal(parse('ui-checklist Checks', 'ok | item')?.heading, 'Checks')
-    assert.equal(parse('ui-kv Round trip', 'a | b | c'), null)
+    assert.equal(parse('ui-kv Round trip', 'a | b | c | d'), null)
+  })
+
+  test('reads a third key-value cell as the fact\'s note', () => {
+    matches(parse('ui-kv', 'Run 1 | 415 | inline script\nRun 2 | 681'), {
+      kind: 'kv', rows: [{ label: 'Run 1', value: '415', note: 'inline script' }, { label: 'Run 2', value: '681', note: undefined }],
+    })
+    matches(parse('ui-kv', 'Install | curl x|sh'), { kind: 'kv', rows: [{ label: 'Install', value: 'curl x|sh', note: undefined }] })
+    matches(parse('ui-kv', 'Install | curl x|sh | piped'), { kind: 'kv', rows: [{ label: 'Install', value: 'curl x|sh', note: 'piped' }] })
+    assert.equal(parse('ui-kv', 'a |  | c'), null)
   })
 
   test('rejects rows with empty cells, wrong cell counts or unknown status words', () => {
     assert.equal(parse('ui-kv', 'a | '), null)
-    assert.equal(parse('ui-kv', 'a | b | c'), null)
+    assert.equal(parse('ui-kv', 'a | b | c | d'), null)
     assert.equal(parse('ui-checklist', 'done | item'), null)
     assert.equal(parse('ui-steps', 'ok | step'), null)
     assert.equal(parse('ui-findings', 'critical | issue'), null)
@@ -74,6 +83,47 @@ describe('parseAnswerComponent', () => {
     assert.equal(parse('ui-metrics', 'Coverage | high | 100'), null)
     assert.equal(parse('ui-metrics', 'Coverage | 1 | 0'), null)
     assert.equal(parse('ui-metrics', 'Coverage | -1 | 100'), null)
+  })
+
+  test('reads a lone signed third metric cell as a change, never a maximum', () => {
+    const changes = parse('ui-metrics', 'Official | 127 → 604 | +477\nThird party | 166 → 161 | -5\nTests | 37 | +5')
+    matches(changes, {
+      kind: 'metrics', rows: [
+        { value: '127 → 604', unit: '+477', maximum: undefined },
+        { value: '166 → 161', unit: '-5', maximum: undefined },
+        { value: '37', unit: '+5', maximum: undefined },
+      ],
+    })
+    // A signed cell followed by a unit is still a malformed meter.
+    assert.equal(parse('ui-metrics', 'Coverage | 80 | +100 | %'), null)
+  })
+
+  test('reads a callout without a tone as info and maps row tone words', () => {
+    matches(parse('ui-callout', 'body'), { kind: 'callout', tone: 'info', title: undefined, body: 'body' })
+    matches(parse('ui-callout Mind the gap', 'body'), { tone: 'info', title: 'Mind the gap' })
+    matches(parse('ui-callout warn Back up', 'body'), { tone: 'warning', title: 'Back up' })
+    matches(parse('ui-callout no', 'body'), { tone: 'danger', title: undefined })
+    matches(parse('ui-callout constructor', 'body'), { tone: 'info', title: 'constructor' })
+  })
+
+  test('reads a fourth findings cell as a note only after the documented split fails', () => {
+    matches(parse('ui-findings', 'high | require() of ESM | src/zip.js:10 | baseline is red too\nmedium | 653 rows unchecked | ledger | add evidence'), {
+      kind: 'findings', rows: [
+        { severity: 'high', text: 'require() of ESM', location: 'src/zip.js:10', note: 'baseline is red too' },
+        { severity: 'medium', location: 'ledger', note: 'add evidence' },
+      ],
+    })
+    matches(parse('ui-findings', 'info | adversarial (fetch|iex) cases | src/a.rs'), {
+      rows: [{ text: 'adversarial (fetch|iex) cases', location: 'src/a.rs', note: undefined }],
+    })
+    assert.equal(parse('ui-findings', 'high | a | b | c | d'), null)
+  })
+
+  test('accepts the ok severity models write for resolved items, with a trailing empty pipe', () => {
+    matches(parse('ui-findings', 'high | cursor p99 300 ms | \nok | taskbar fixed | \ninfo | scheduler healthy |'), {
+      kind: 'findings', rows: [{ severity: 'high', location: undefined }, { severity: 'ok', text: 'taskbar fixed' }, { severity: 'info' }],
+    })
+    assert.equal(parse('ui-findings', 'warn | issue'), null)
   })
 
   test('marks a value above its maximum as an overrun whose tone defaults to no', () => {
@@ -107,6 +157,16 @@ describe('parseAnswerComponent', () => {
     // Lines after the blank line are further formulas when none is a legend row; a mix is invalid.
     matches(parse('ui-math', 'r = a\n\nr = b'), { equations: ['r = a', 'r = b'], symbols: [] })
     assert.equal(parse('ui-math', 'x = 1\n\nx | ok\ny'), null)
+  })
+
+  test('reads blank-separated formula groups before a trailing legend', () => {
+    matches(parse('ui-math', 'q = n / 86400\ng = q / 24.5\n\nn = 50 \\Rightarrow 0.24\nn = 500 \\Rightarrow 2.4\n\nn | Calls per user per day\n24.5 | QPS of one GPU\n'), {
+      kind: 'math', title: undefined,
+      equations: ['q = n / 86400', 'g = q / 24.5', 'n = 50 \\Rightarrow 0.24', 'n = 500 \\Rightarrow 2.4'],
+      symbols: [{ symbol: 'n', meaning: 'Calls per user per day' }, { symbol: '24.5', meaning: 'QPS of one GPU' }],
+    })
+    matches(parse('ui-math', 'a = 1\n\nb = 2\n\nc = 3'), { equations: ['a = 1', 'b = 2', 'c = 3'], symbols: [] })
+    assert.equal(parse('ui-math', 'a = 1\n\nb = 2\n\nb | ok\nc = 3'), null)
   })
 
   test('sums file deltas, one-sided counts and change labels', () => {
@@ -266,7 +326,21 @@ describe('parseAnswerComponent', () => {
     assert.equal(parse('ui-decision', 'Q?\nA\n- B'), null)
     assert.equal(parse('ui-decision', 'Q?\n- A\n- A'), null)
     assert.equal(parse('ui-decision', 'Q?\n* A\n* B'), null)
-    assert.equal(parse('ui-decision', '- Q?\n- A\n- B'), null)
+    assert.equal(parse('ui-decision', '*Q?*\n- A'), null)
     assert.equal(parse('ui-decision single', 'Q?\n- A\n- B'), null)
+  })
+
+  test('accepts a recommendation without the space after its star and a decision without a question line', () => {
+    matches(parse('ui-decision', '*Clean | Back up first\n- Install Node\n- Leave it'), {
+      kind: 'decision', multiple: false, question: '', options: [
+        { label: 'Clean', note: 'Back up first', recommended: true },
+        { label: 'Install Node', note: undefined, recommended: false },
+        { label: 'Leave it', note: undefined, recommended: false },
+      ],
+    })
+    matches(parse('ui-decision', 'Next?\n*A\n- B'), { question: 'Next?', options: [{ label: 'A', recommended: true }, { label: 'B' }] })
+    matches(parse('ui-decision', '**Next?**\n- A\n- B'), { question: '**Next?**' })
+    // `-` still needs its space, so `-3` is not an option.
+    assert.equal(parse('ui-decision', 'Q?\n-3\n- B'), null)
   })
 })

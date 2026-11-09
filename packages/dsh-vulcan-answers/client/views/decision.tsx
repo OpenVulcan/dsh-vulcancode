@@ -32,7 +32,8 @@ export function DecisionView({ anchor, decision, hub, replyKey, t }: {
   const save = (nextPicks: readonly string[], nextNote: string) => {
     setFailed(false)
     store?.set(replyKey, nextPicks.length > 0 || nextNote.trim() ? {
-      question: decision.question,
+      // A decision without a question line is named in the reply by its options.
+      question: decision.question || decision.options.map((option) => option.label).join(' / '),
       picks: nextPicks,
       recommended: decision.options.filter((option) => option.recommended).map((option) => option.label),
       note: nextNote,
@@ -54,7 +55,7 @@ export function DecisionView({ anchor, decision, hub, replyKey, t }: {
         <strong>{decision.question}</strong>
         {decision.multiple ? <small>{t('decision.multiple')}</small> : null}
       </header>
-      <div aria-label={decision.question} className="vda-decision-options" role={decision.multiple ? 'group' : 'radiogroup'}>
+      <div aria-label={decision.question || undefined} className="vda-decision-options" role={decision.multiple ? 'group' : 'radiogroup'}>
         {decision.options.map((option) => {
           const picked = picks.includes(option.label)
           return (

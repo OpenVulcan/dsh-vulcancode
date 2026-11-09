@@ -16,8 +16,8 @@ export type AnswerTone = 'ok' | 'warn' | 'no'
 /** Checklist status: a tone or an open item. */
 export type AnswerStatus = AnswerTone | 'todo'
 
-/** Finding severity. */
-export type AnswerSeverity = 'high' | 'medium' | 'low' | 'info'
+/** Finding severity. `ok` is not in the prompt; models write it for a resolved or healthy item. */
+export type AnswerSeverity = 'high' | 'medium' | 'low' | 'info' | 'ok'
 
 /** Plan step status. */
 export type AnswerStepStatus = 'done' | 'now' | 'todo'
@@ -146,9 +146,9 @@ export type AnswerComponent = AnswerComponentBody & { heading?: string | undefin
 
 /** Every renderable component without its heading. */
 export type AnswerComponentBody =
-  | { kind: 'kv'; rows: { label: string; value: string }[] }
+  | { kind: 'kv'; rows: { label: string; value: string; note?: string | undefined }[] }
   | { kind: 'metrics'; rows: AnswerMetric[] }
-  | { kind: 'findings'; rows: { severity: AnswerSeverity; text: string; location?: string | undefined }[] }
+  | { kind: 'findings'; rows: { severity: AnswerSeverity; text: string; location?: string | undefined; note?: string | undefined }[] }
   | { kind: 'compare'; header: string[]; rows: { criterion: string; cells: AnswerTonedText[] }[] }
   | { kind: 'checklist'; items: { status: AnswerStatus; item: string; note?: string | undefined; location?: string | undefined }[] }
   | { kind: 'steps'; steps: { status: AnswerStepStatus; title: string; text?: string | undefined }[] }
@@ -175,9 +175,11 @@ export const SUPPORTED_ANSWER_LANGUAGES: ReadonlySet<string> = new Set([
 
 const TONES = new Set<string>(['ok', 'warn', 'no'])
 const STATUSES = new Set<string>(['ok', 'warn', 'no', 'todo'])
-const SEVERITIES = new Set<string>(['high', 'medium', 'low', 'info'])
+const SEVERITIES = new Set<string>(['high', 'medium', 'low', 'info', 'ok'])
 const STEP_STATUSES = new Set<string>(['done', 'now', 'todo'])
 const CALLOUT_TONES = new Set<string>(['info', 'success', 'warning', 'danger'])
+/** Row tone words models reuse as callout tones. */
+const CALLOUT_TONE_ALIASES = new Map<string, AnswerCalloutTone>([['ok', 'success'], ['warn', 'warning'], ['no', 'danger']])
 const CHART_KINDS = new Set<string>(['bar', 'hbar', 'stack', 'line', 'area', 'pie', 'donut'])
 
 /** Finite decimal number syntax shared by metrics and charts. */
@@ -192,13 +194,18 @@ export function parseAnswerComponent(language: string, meta: string, body: strin
   if (!body.trim()) return null
   switch (language) {
     case 'ui-kv':
-      return titled(args, () => mapRows(body, 2, 2, ([label = '', value = '']) => ({ label, value }), (rows) => ({ kind: 'kv', rows })))
+      // A row that is not a pair, even after the lenient split, may carry a third cell: models give facts a
+      // note column. Reading the pair first keeps a value such as `curl x|sh` whole.
+      return titled(args, () => mapLines(
+        body,
+        (line) => rowCells(line, 2, 2) ?? rowCells(line, 2, 3),
+        ([label = '', value = '', note]) => (note === undefined ? { label, value } : { label, value, note }),
+        (rows) => ({ kind: 'kv', rows }),
+      ))
     case 'ui-metrics':
       return titled(args, () => mapLines(body, metricCells, metric, (rows) => ({ kind: 'metrics', rows })))
     case 'ui-findings':
-      return titled(args, () => mapRows(body, 2, 3, ([severity = '', text = '', location]) => (
-        SEVERITIES.has(severity) ? { severity: severity as AnswerSeverity, text, location } : null
-      ), (rows) => ({ kind: 'findings', rows })))
+      return titled(args, () => findings(body))
     case 'ui-compare':
       return titled(args, () => compare(body))
     case 'ui-checklist':
@@ -228,11 +235,8 @@ export function parseAnswerComponent(language: string, meta: string, body: strin
       return math(args, body)
     case 'ui-decision':
       return args === '' || args === 'multi' ? decision(args === 'multi', body) : null
-    case 'ui-callout': {
-      const [tone = '', ...title] = args.split(/\s+/u).filter(Boolean)
-      if (!CALLOUT_TONES.has(tone)) return null
-      return { kind: 'callout', tone: tone as AnswerCalloutTone, title: title.join(' ') || undefined, body }
-    }
+    case 'ui-callout':
+      return callout(args, body)
     case 'ui-details':
       return args ? { kind: 'details', title: args, body } : null
     case 'ui-tabs':
@@ -247,6 +251,29 @@ export function parseAnswerComponent(language: string, meta: string, body: strin
 function titled(args: string, parse: () => AnswerComponent | null): AnswerComponent | null {
   const component = parse()
   return component && args ? { ...component, heading: args } : component
+}
+
+/**
+ * `severity | finding | location` rows. Models sometimes add a fourth note cell as in `ui-checklist`; it is read
+ * only after the documented split, including the lenient one, has failed, so `fetch|iex` stays in the finding.
+ * Models also mark a resolved or healthy item with the severity `ok`.
+ */
+function findings(body: string): AnswerComponent | null {
+  const cells = (line: string) => rowCells(line, 2, 3) ?? rowCells(line, 4, 4)
+  return mapLines(body, cells, ([severity = '', text = '', location, note]) => (
+    SEVERITIES.has(severity) ? { severity: severity as AnswerSeverity, text, location, note } : null
+  ), (rows) => ({ kind: 'findings', rows }))
+}
+
+/**
+ * `ui-callout <tone> [title]`. Models sometimes omit the tone or write a row tone word: a row tone word maps to
+ * its callout tone, and without any tone word the callout is `info` with the whole text after the name as title.
+ */
+function callout(args: string, body: string): AnswerComponent {
+  const [word = '', ...rest] = args.split(/\s+/u).filter(Boolean)
+  const tone = CALLOUT_TONES.has(word) ? word as AnswerCalloutTone : CALLOUT_TONE_ALIASES.get(word)
+  const title = (tone === undefined ? args : rest.join(' ')) || undefined
+  return { kind: 'callout', tone: tone ?? 'info', title, body }
 }
 
 /**
@@ -342,7 +369,8 @@ function number(text: string): number | null {
 /**
  * `label | value [| maximum [| unit]] [| tone]`; a maximum requires a nonnegative numeric value, and a
  * value above it is an overrun whose tone defaults to `no`. Models also write `label | value | unit`: a lone
- * third cell that is not a number is read as the unit, without a meter. Models also leave the maximum and unit
+ * third cell that is not an unsigned number (a change such as `+477` included) is read as the unit, without a
+ * meter, and the value may then be text such as `127 → 604`. Models also leave the maximum and unit
  * cells empty to keep the columns aligned (`label | value | | | tone`, `label | value | | MB`); an empty cell in
  * those two positions means the value is absent, while an empty label, value or any other cell is malformed.
  */
@@ -356,7 +384,8 @@ function metric(input: string[]): AnswerMetric | null {
   const maximum = cells[2] || undefined
   const unit = cells[3] || undefined
   if (maximum === undefined) return { label, value, unit, tone }
-  const max = number(maximum)
+  // A signed third cell such as `+477` is a change, never a maximum, so it reads as the unit too.
+  const max = /^[+-]/u.test(maximum) ? null : number(maximum)
   if (max === null && unit === undefined) return { label, value, unit: maximum, tone }
   const numeric = number(value)
   if (numeric === null || max === null || max <= 0 || numeric < 0) return null
@@ -753,14 +782,17 @@ function er(horizontal: boolean, body: string): AnswerComponent | null {
 function math(args: string, body: string): AnswerComponent | null {
   const lines = body.split(/\r?\n/u)
   while (lines.length > 0 && !lines[0]?.trim()) lines.shift()
-  const blank = lines.findIndex((line) => !line.trim())
-  // Models also separate equations with blank lines: when no line after the first blank line is a
-  // `symbol | meaning` row, those lines are further formulas and there is no legend. A mix of both is invalid.
+  while (lines.length > 0 && !lines[lines.length - 1]?.trim()) lines.pop()
+  // Models also separate groups of equations with blank lines, so only the group after the last blank line can
+  // be the legend: it is one when every row is `symbol | meaning`, further formulas when none is, and a mix is
+  // invalid. Every earlier group is formulas.
+  let blank = lines.length - 1
+  while (blank >= 0 && lines[blank]?.trim()) blank -= 1
   const after = blank < 0 ? [] : dataLines(lines.slice(blank + 1).join('\n'))
   const legendRows = after.map((line) => rowCells(line, 2, 2))
   const isLegend = legendRows.every((cells) => cells !== null)
   if (!isLegend && legendRows.some((cells) => cells !== null)) return null
-  const formula = (blank < 0 ? lines : lines.slice(0, blank)).map((line) => line.trim())
+  const formula = (blank < 0 ? lines : lines.slice(0, blank)).map((line) => line.trim()).filter(Boolean)
     .concat(isLegend ? [] : after.map((line) => line.trim()))
   const legend = isLegend ? legendRows as string[][] : []
   if (formula.length === 0 || formula.length + legend.length > ANSWER_COMPONENT_MAX_ROWS) return null
@@ -770,19 +802,34 @@ function math(args: string, body: string): AnswerComponent | null {
 }
 
 /**
+ * One decision option line: `* text` (recommended) or `- text`. Models also write the recommendation as `*text`
+ * without the space; a line wrapped in or opening with emphasis (`*Q?*`, `**Q?**`) stays text. `-` still needs
+ * its space so labels such as `-3` are not read as options.
+ */
+function decisionOption(line: string): { recommended: boolean; text: string } | null {
+  if (line.startsWith('* ') || line.startsWith('- ')) return { recommended: line.startsWith('*'), text: line.slice(2) }
+  if (line.startsWith('*') && !line.startsWith('**') && !line.endsWith('*')) return { recommended: true, text: line.slice(1) }
+  return null
+}
+
+/**
  * `ui-decision [multi]`: the question line, then option lines `* label | note` (the recommended option)
- * or `- label | note`. Labels are unique; a single choice recommends at most one option.
+ * or `- label | note`. Labels are unique; a single choice recommends at most one option. A body whose first
+ * line is already an option has no question; the reply summary then names it by its options.
  */
 function decision(multiple: boolean, body: string): AnswerComponent | null {
-  const [question = '', ...lines] = body.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean)
-  if (/^[*-] /u.test(question) || lines.length < 2 || lines.length > ANSWER_COMPONENT_MAX_ROWS) return null
+  const rows = body.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean)
+  const [first = ''] = rows
+  const question = decisionOption(first) === null ? first : ''
+  const lines = question ? rows.slice(1) : rows
+  if (lines.length < 2 || lines.length > ANSWER_COMPONENT_MAX_ROWS) return null
   const options: AnswerDecisionOption[] = []
   for (const line of lines) {
-    const marker = line.slice(0, 2)
-    const cells = marker === '* ' || marker === '- ' ? rowCells(line.slice(2), 1, 2) : null
+    const option = decisionOption(line)
+    const cells = option === null ? null : rowCells(option.text, 1, 2)
     const label = cells?.[0]
-    if (cells === null || label === undefined || options.some((option) => option.label === label)) return null
-    options.push({ label, note: cells[1], recommended: marker === '* ' })
+    if (option === null || cells === null || label === undefined || options.some((item) => item.label === label)) return null
+    options.push({ label, note: cells[1], recommended: option.recommended })
   }
   if (!multiple && options.filter((option) => option.recommended).length > 1) return null
   return { kind: 'decision', multiple, question, options }

@@ -92,6 +92,7 @@ body[data-ds-dark-theme] :is(.vda, .vda-mode) {${DARK_TOKENS}}
 .vda-table tbody tr:last-child td { border-bottom: 0; }
 .vda-table [data-numeric] { text-align: end; font-variant-numeric: tabular-nums; }
 .vda-table-index { width: 1%; color: var(--vk-ink-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.vda-finding-note { display: block; color: var(--vk-ink-3); font-size: var(--vk-fs-md); }
 .vda-compare td:first-child { color: var(--vk-ink); font-weight: 600; }
 .vda-badge { display: inline-flex; align-items: center; gap: var(--vk-u); padding: 0 calc(var(--vk-u) * 1.5); border: 1px solid color-mix(in srgb, var(--vk-tone, var(--vk-ink-3)) 35%, var(--vk-line)); background: color-mix(in srgb, var(--vk-tone, var(--vk-ink-3)) 10%, var(--vk-panel)); color: var(--vk-tone, var(--vk-ink-2)); font-size: var(--vk-fs-xs); font-weight: 600; line-height: 18px; white-space: nowrap; }
 .vda-icon-button { display: inline-grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; background: transparent; color: var(--vk-ink-3); cursor: pointer; }
@@ -140,6 +141,8 @@ body[data-ds-dark-theme] :is(.vda, .vda-mode) {${DARK_TOKENS}}
 .vda-kv::before { content: ""; position: absolute; top: 0; left: calc(var(--vk-tick-h) * -1); width: var(--vk-tick-h); height: var(--vk-tick-w); background: var(--vk-ember); opacity: 0.8; }
 .vda-kv :is(dt, dd) { margin: 0; padding: calc(var(--vk-u) * 1.25) 0; border-bottom: 1px solid var(--vk-line-soft); }
 .vda-kv dt { color: var(--vk-ink-3); font-size: var(--vk-fs-sm); letter-spacing: 0.02em; }
+.vda-kv dd { min-width: 0; overflow-wrap: anywhere; }
+.vda-kv-note { display: block; color: var(--vk-ink-3); font-size: var(--vk-fs-sm); }
 
 /* ---------- Checklist ---------- */
 .vda-checklist li { display: grid; grid-template-columns: 1.125rem minmax(0, 1fr); gap: 0 calc(var(--vk-u) * 2.5); padding: var(--vk-u) 0; }
