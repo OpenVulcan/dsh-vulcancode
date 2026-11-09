@@ -394,12 +394,13 @@ function compare(body: string): AnswerComponent | null {
 
 /**
  * `path | +added -removed | note` rows; both later cells are optional, totals are summed. Models also write one
- * side only (`+145`) or a change label in place of the counts (`path | new | note`); both are accepted.
+ * side only (`+145`), a change label in place of the counts (`path | new | note`), or leave the counts cell empty
+ * to keep the columns aligned (`path | | note`); all are accepted.
  */
 function files(body: string): AnswerComponent | null {
   let added = 0
   let removed = 0
-  return mapRows(body, 1, 3, ([path = '', second, third]): AnswerFile | null => {
+  return mapLines(body, fileCells, ([path = '', second, third]): AnswerFile | null => {
     const delta = second === undefined ? null : lineDelta(second)
     if (delta === null && third !== undefined) return { path, status: second, note: third }
     if (delta === null) return { path, note: second }
@@ -407,6 +408,17 @@ function files(body: string): AnswerComponent | null {
     removed += delta.removed ?? 0
     return { path, ...delta, note: third }
   }, (rows) => ({ kind: 'files', files: rows, added, removed }))
+}
+
+/**
+ * Cells of one `ui-files` row: 1..=3 nonempty cells, or `path | | note` with an empty counts cell, read as
+ * `path | note`. Any other empty cell still makes the row malformed.
+ */
+function fileCells(line: string): string[] | null {
+  const plain = rowCells(line, 1, 3)
+  if (plain !== null) return plain
+  const [path, counts, note, ...rest] = answerCells(line)
+  return rest.length === 0 && path && counts === '' && note ? [path, note] : null
 }
 
 /** Line counts of `+added -removed`, `+added` or `-removed` (`−` also marks removals); null for other text. */

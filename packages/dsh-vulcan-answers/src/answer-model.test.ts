@@ -122,6 +122,14 @@ describe('parseAnswerComponent', () => {
     })
   })
 
+  test('reads an empty file counts cell as a row with only a note', () => {
+    matches(parse('ui-files', 'a.tsx | | folds tool cards\nb.css | +3 -1 | keyframes'), {
+      kind: 'files', added: 3, removed: 1, files: [{ path: 'a.tsx', status: undefined, note: 'folds tool cards' }, { added: 3 }],
+    })
+    assert.equal(parse('ui-files', '| | note'), null)
+    assert.equal(parse('ui-files', 'a.tsx | | note | extra'), null)
+  })
+
   test('reads a lone non-numeric third metric cell as a unit and empty maximum or unit cells as absent', () => {
     matches(parse('ui-metrics', 'Scan | 10.9 | s'), { rows: [{ value: '10.9', unit: 's', maximum: undefined }] })
     matches(parse('ui-metrics', 'Raw | 506 s | | | no\nSize | 0.96 | | MB | ok\nCoverage | 81 | 100 | | ok'), {
