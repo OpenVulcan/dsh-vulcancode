@@ -5,12 +5,12 @@
  * the page.
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 
 import { fill, type Key, type Translate } from './i18n'
 import { AccountSection, EndpointsSection, lockEndpoint, ModelSection } from './cloud'
 import { LocalSections } from './local'
-import { RecordsPage } from './records'
+import { RecordsPanel } from './records'
 import {
   callPanel, DEFAULT_ASK_TIMEOUT, MAX_ASK_TIMEOUT, MAX_PROMPT_CHARS, running, type GuardSettings, type PanelState, type Services,
 } from './shared'
@@ -21,6 +21,14 @@ const TRY_CALLS = {
   safe: { tool: 'shell_command', args: { command: 'git status', shell: 'bash' } },
   risky: { tool: 'shell_command', args: { command: 'git push --force origin main', shell: 'bash' } },
 } as const
+
+// The sections appear in the same order in navigation and in the page.
+// 分区在导航和正文中按同一顺序排列。
+const SETTINGS_VIEWS = ['engine', 'policy', 'records'] as const
+
+// The identifier of one auto-approval settings section.
+// 自动审批设置中的单个分区标识。
+type SettingsView = typeof SETTINGS_VIEWS[number]
 
 type Save = ReturnType<typeof useSettings>['save']
 
@@ -273,12 +281,15 @@ function PromptsSection({ t, value, disabled, saveAsync }: {
 }
 
 /** The decision log switch and the way into the log. */
-function RecordsSection({ t, value, disabled, save, onOpen }: { t: Translate; value: GuardSettings; disabled: boolean; save: Save; onOpen: () => void }) {
+/**
+ * Render the recording preference using the dictionary, current settings, disabled state and save callback.
+ * 使用文案、当前设置、禁用状态与保存回调渲染判定记录开关。
+ */
+function RecordsSection({ t, value, disabled, save }: { t: Translate; value: GuardSettings; disabled: boolean; save: Save }) {
   return (
     <Section
       title={t('records.title')}
       lead={t('records.entryHint')}
-      actions={<button type="button" className="vdg-btn sm" onClick={onOpen}>{t('records.open')} →</button>}
     >
       <label className="vdg-check">
         <input type="checkbox" checked={value.recordDecisions} disabled={disabled} onChange={(event) => { save({ recordDecisions: event.target.checked }) }} />
@@ -378,10 +389,22 @@ function TrySection({ t }: { t: Translate }) {
   )
 }
 
+/**
+ * Render the engine, policy and records views using the guard services and localized dictionary.
+ * 使用审批服务与本地化词典渲染判定引擎、复核规则与记录分区。
+ */
 export function SettingsPage({ services, t }: { services: Services; t: Translate }) {
   const settings = useSettings(services.form, t)
   const live = useWatch(services.panel)
-  const [view, setView] = useState<'settings' | 'records'>('settings')
+  // The selected section controls visibility while keeping settings drafts mounted.
+  // 所选分区控制显示状态，同时保留已挂载的设置草稿。
+  const [view, setView] = useState<SettingsView>('engine')
+  // The root is the scroll target when the user changes sections from the sticky navigation.
+  // 用户从吸附导航切换分区时，将设置页根节点作为滚动目标。
+  const page = useRef<HTMLDivElement>(null)
+  // Each navigation control points to its own panel within this settings instance.
+  // 每个分区按钮指向当前设置实例中的对应面板。
+  const viewId = useId()
   const active = live != null && running(live.job)
   usePolling(services.panel, active ? 1000 : undefined)
   const value = settings.value
@@ -392,79 +415,114 @@ export function SettingsPage({ services, t }: { services: Services; t: Translate
     return <div className="vdg vdg-page"><div className="vdg-alert warn">{t('unavailable')}</div></div>
   }
   const { disabled, save, saveAsync } = settings
-  if (view === 'records') return <RecordsPage t={t} recording={value.recordDecisions} onBack={() => { setView('settings') }} />
   const refresh = (): void => {
     services.panel.refresh()
     services.cloudModels.refresh()
     services.endpoints.refresh()
   }
+  /**
+   * Activate the requested settings section and return to its start in the host's scroll pane.
+   * 激活指定的设置分区，并在宿主滚动容器内回到分区开头。
+   */
+  const selectView = (next: SettingsView): void => {
+    if (view === next) return
+    setView(next)
+    page.current?.scrollIntoView({ block: 'start' })
+  }
   return (
-    <div className="vdg vdg-page" data-vulcan-settings-width="full">
+    <div ref={page} className="vdg vdg-page" data-vulcan-settings-width="full">
       <header className="vdg-page-head" data-vulcan-settings-header>
         <h2>{t('page.title')}</h2>
         <p className="vdg-lead">{t('page.lead')}</p>
       </header>
+      <div className="vdg-settings-navigation" role="group" aria-label={t('page.sections')}>
+        {SETTINGS_VIEWS.map(item => (
+          <button
+            key={item}
+            id={`${viewId}-${item}-button`}
+            type="button"
+            aria-pressed={view === item}
+            aria-controls={`${viewId}-${item}`}
+            onClick={() => { selectView(item) }}
+          >
+            {t(`page.section.${item}`)}
+          </button>
+        ))}
+      </div>
       {settings.writable ? null : <div className="vdg-alert warn">{t('readOnly')}</div>}
       <ErrorLine text={settings.error} />
-      <StatusSection services={services} t={t} value={value} live={live} />
-      <Section title={t('mode.title')}>
-        <Choices
-          label={t('mode.title')}
-          value={value.mode}
-          options={(['auto-preset', 'standalone'] as const).map(item => ({ value: item, title: t(`mode.${item}` as Key), hint: t(`mode.${item}.hint` as Key) }))}
-          disabled={disabled}
-          onChoose={(next) => { save({ mode: next }) }}
-        />
-      </Section>
-      <Section title={t('backend.title')}>
-        <Choices
-          label={t('backend.title')}
-          value={value.backend}
-          options={(['cloud', 'local'] as const).map(item => ({ value: item, title: t(`backend.${item}` as Key), hint: t(`backend.${item}.hint` as Key) }))}
-          disabled={disabled}
-          onChoose={(next) => { save({ backend: next }) }}
-        />
-      </Section>
-      {live === undefined
-        ? <p className="vdg-hint">{t('loading')}</p>
-        : live === null
-          ? <div className="vdg-alert bad">{t('panel.unavailable')}</div>
-          : value.backend === 'cloud'
-            ? (
-              <>
-                <AccountSection services={services} t={t} account={live.account} />
-                {live.account.signedIn
-                  ? (
-                    <>
-                      <ModelSection
-                        services={services}
-                        t={t}
-                        saved={value.cloudModel}
-                        disabled={disabled}
-                        onChoose={(model) => {
-                          // A lock belongs to the model it was chosen for.
-                          void saveAsync({ cloudModel: model === '' ? undefined : model, cloudEndpoint: undefined }).then(() => { services.endpoints.refresh() })
-                        }}
-                      />
-                      <EndpointsSection
-                        services={services}
-                        t={t}
-                        disabled={disabled}
-                        onLock={endpoint => lockEndpoint(saveAsync, value.cloudModel, endpoint, t('readOnly'))}
-                      />
-                    </>
-                  )
-                  : null}
-              </>
-            )
-            : <LocalSections t={t} live={live} value={value} disabled={disabled} save={save} refresh={refresh} />}
-      <OptionsSection t={t} value={value} disabled={disabled} save={save} />
-      <ReviewSection services={services} t={t} value={value} disabled={disabled} save={save} />
-      {value.review === 'off' ? null : <RulesSection t={t} value={value} disabled={disabled} saveAsync={saveAsync} />}
-      {value.review === 'off' ? null : <PromptsSection t={t} value={value} disabled={disabled} saveAsync={saveAsync} />}
-      <AskSection t={t} value={value} disabled={disabled} save={save} />
-      <RecordsSection t={t} value={value} disabled={disabled} save={save} onOpen={() => { setView('records') }} />
-      <TrySection t={t} />
+      {/* Keep the configuration panels mounted so changing views preserves unsaved rules and prompts.
+          保持配置分区挂载，切换时保留尚未保存的规则与提示词。 */}
+      <section className="vdg-settings-group" id={`${viewId}-engine`} aria-labelledby={`${viewId}-engine-button`} hidden={view !== 'engine'}>
+        <StatusSection services={services} t={t} value={value} live={live} />
+        <Section title={t('mode.title')}>
+          <Choices
+            label={t('mode.title')}
+            value={value.mode}
+            options={(['auto-preset', 'standalone'] as const).map(item => ({ value: item, title: t(`mode.${item}` as Key), hint: t(`mode.${item}.hint` as Key) }))}
+            disabled={disabled}
+            onChoose={(next) => { save({ mode: next }) }}
+          />
+        </Section>
+        <Section title={t('backend.title')}>
+          <Choices
+            label={t('backend.title')}
+            value={value.backend}
+            options={(['cloud', 'local'] as const).map(item => ({ value: item, title: t(`backend.${item}` as Key), hint: t(`backend.${item}.hint` as Key) }))}
+            disabled={disabled}
+            onChoose={(next) => { save({ backend: next }) }}
+          />
+        </Section>
+        {live === undefined
+          ? <p className="vdg-hint">{t('loading')}</p>
+          : live === null
+            ? <div className="vdg-alert bad">{t('panel.unavailable')}</div>
+            : value.backend === 'cloud'
+              ? (
+                <>
+                  <AccountSection services={services} t={t} account={live.account} />
+                  {live.account.signedIn
+                    ? (
+                      <>
+                        <ModelSection
+                          services={services}
+                          t={t}
+                          saved={value.cloudModel}
+                          disabled={disabled}
+                          onChoose={(model) => {
+                            // A lock belongs to the model it was chosen for.
+                            void saveAsync({ cloudModel: model === '' ? undefined : model, cloudEndpoint: undefined }).then(() => { services.endpoints.refresh() })
+                          }}
+                        />
+                        <EndpointsSection
+                          services={services}
+                          t={t}
+                          disabled={disabled}
+                          onLock={endpoint => lockEndpoint(saveAsync, value.cloudModel, endpoint, t('readOnly'))}
+                        />
+                      </>
+                    )
+                    : null}
+                </>
+              )
+              : <LocalSections t={t} live={live} value={value} disabled={disabled} save={save} refresh={refresh} />}
+        <OptionsSection t={t} value={value} disabled={disabled} save={save} />
+        <TrySection t={t} />
+      </section>
+      <section className="vdg-settings-group" id={`${viewId}-policy`} aria-labelledby={`${viewId}-policy-button`} hidden={view !== 'policy'}>
+        <ReviewSection services={services} t={t} value={value} disabled={disabled} save={save} />
+        {value.review === 'off' ? null : <RulesSection t={t} value={value} disabled={disabled} saveAsync={saveAsync} />}
+        {value.review === 'off' ? null : <PromptsSection t={t} value={value} disabled={disabled} saveAsync={saveAsync} />}
+        <AskSection t={t} value={value} disabled={disabled} save={save} />
+      </section>
+      <section className="vdg-settings-group" id={`${viewId}-records`} aria-labelledby={`${viewId}-records-button`} hidden={view !== 'records'}>
+        {view === 'records' ? (
+          <>
+            <RecordsSection t={t} value={value} disabled={disabled} save={save} />
+            <RecordsPanel t={t} recording={value.recordDecisions} />
+          </>
+        ) : null}
+      </section>
     </div>
   )
 }

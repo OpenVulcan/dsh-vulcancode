@@ -28,6 +28,15 @@ body[data-ds-dark-theme] .vdg {
 .vdg *, .vdg *::before, .vdg *::after { box-sizing: border-box; }
 .vdg-page { display: flex; flex-direction: column; gap: calc(var(--vk-u) * 4); counter-reset: vdg-section; padding-bottom: calc(var(--vk-u) * 2); }
 .vdg-page-head h2 { margin: 0; font-size: 16px; font-weight: 600; }
+
+/* Keep the section switcher reachable inside the host's single scrolling pane. */
+/* 在宿主唯一的滚动正文内，让分区切换栏始终可触达。 */
+.vdg-settings-navigation { position: sticky; top: 0; z-index: 1; display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--vk-line); background: var(--vk-panel); }
+.vdg-settings-navigation > button { min-height: 36px; padding: 6px 12px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--vk-ink-2); font: inherit; cursor: pointer; }
+.vdg-settings-navigation > button:hover { background: var(--vk-hover); color: var(--vk-ink); }
+.vdg-settings-navigation > button[aria-pressed="true"] { border-bottom-color: var(--vk-ember); color: var(--vk-ink); font-weight: 600; }
+.vdg-settings-navigation > button:focus-visible { outline: 2px solid var(--vk-signal); outline-offset: -3px; }
+.vdg-settings-group:not([hidden]) { display: flex; flex-direction: column; gap: calc(var(--vk-u) * 4); min-width: 0; }
 .vdg-lead { margin: calc(var(--vk-u) * 1) 0 0; color: var(--vk-ink-2); }
 .vdg-hint { margin: 0; color: var(--vk-ink-3); font-size: 12px; }
 .vdg-error { margin: 0; color: var(--vk-bad); font-size: 12px; overflow-wrap: anywhere; }

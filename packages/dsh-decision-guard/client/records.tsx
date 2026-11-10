@@ -52,7 +52,11 @@ function pageQuery(filters: Filters, before: string | undefined): string {
   return `records?${query.toString()}`
 }
 
-export function RecordsPage({ t, recording, onBack }: { t: Translate; recording: boolean; onBack: () => void }) {
+/**
+ * Render decision history and its actions using the dictionary and current recording state.
+ * 根据本地化词典和当前记录开关状态渲染判定历史及其操作。
+ */
+export function RecordsPanel({ t, recording }: { t: Translate; recording: boolean }) {
   const [filters, setFilters] = useState<Filters>({ label: undefined, workspace: undefined, markedOnly: false })
   const [page, setPage] = useState<RecordPage | undefined>(undefined)
   const [loadError, setLoadError] = useState<string | undefined>(undefined)
@@ -126,12 +130,7 @@ export function RecordsPage({ t, recording, onBack }: { t: Translate; recording:
   )
 
   return (
-    <div className="vdg vdg-page" data-vulcan-settings-width="full">
-      <header className="vdg-page-head" data-vulcan-settings-header>
-        <button type="button" className="vdg-link" onClick={onBack}>← {t('records.back')}</button>
-        <h2>{t('records.title')}</h2>
-        <p className="vdg-lead">{t('records.entryHint')}</p>
-      </header>
+    <>
       {recording ? null : <div className="vdg-alert warn">{t('records.paused')}</div>}
       {page === undefined
         ? (
@@ -227,7 +226,7 @@ export function RecordsPage({ t, recording, onBack }: { t: Translate; recording:
           </Dialog>
         )
         : null}
-    </div>
+    </>
   )
 }
 
