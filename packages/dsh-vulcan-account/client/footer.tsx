@@ -6,7 +6,7 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
 
 import { fill, type Key, type Translate } from './i18n'
-import { callAccount, messageOf, SITES, type AccountProfile, type AccountView, type HostWatch, type Site } from './shared'
+import { callAccount, messageOf, SITES, startAccountSignIn, type AccountProfile, type AccountView, type HostWatch } from './shared'
 
 export interface FooterProps {
   readonly wide: boolean
@@ -44,23 +44,6 @@ export function AccountFooter({ wide, t, view, profile, openSettings }: FooterPr
       view.refresh()
     })
   }
-  const signIn = (site: Site): void => {
-    // Opened during the click, so no popup blocker stops it, and pointed at the page once known.
-    const popup = window.open('about:blank', '_blank')
-    act(async () => {
-      try {
-        const { approvalUrl } = await callAccount<{ approvalUrl: string }>('POST', `signin?site=${site}`)
-        if (popup !== null) {
-          popup.opener = null
-          popup.location.href = approvalUrl
-        }
-      } catch (failure) {
-        popup?.close()
-        throw failure
-      }
-    })
-  }
-
   // Without the plugin routes there is nothing to show or do here.
   if (live === null) return null
   const name = signedIn ? (who?.nickname || who?.username) : undefined
@@ -131,7 +114,7 @@ export function AccountFooter({ wide, t, view, profile, openSettings }: FooterPr
             className="vac-foot-chip"
             disabled={busy}
             title={fill(t('footer.signInAt'), { site: t(`account.site.${item.site}` as Key), domain: item.domain })}
-            onClick={() => { signIn(item.site) }}
+            onClick={() => { act(() => startAccountSignIn(item.site)) }}
           >
             {t(`footer.chip.${item.site}` as Key)}
           </button>

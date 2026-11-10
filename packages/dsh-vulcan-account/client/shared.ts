@@ -46,6 +46,33 @@ export async function callAccount<T>(method: 'GET' | 'POST', route: string): Pro
   return answer.value as T
 }
 
+/**
+ * Start device sign-in for the selected site and request its authorization page. Resolves after
+ * asking the browser or desktop shell to open it, and rejects if the sign-in request fails.
+ * 为所选站点发起设备登录并请求打开授权页。向浏览器或桌面壳发出打开请求后完成，登录请求失败时拒绝。
+ */
+export async function startAccountSignIn(site: Site): Promise<void> {
+  // A browser needs the click to open a tab before the asynchronous sign-in request.
+  // 浏览器需要利用点击手势在异步登录请求之前打开标签页。
+  const popup = window.open('about:blank', '_blank')
+  try {
+    // The account service validates the approval URL against the selected site and sign-in state.
+    // 账号服务会根据所选站点和登录状态验证授权地址。
+    const { approvalUrl } = await callAccount<{ approvalUrl: string }>('POST', `signin?site=${site}`)
+    if (popup === null) {
+      // dsh Desktop denies the blank tab and sends HTTP(S) URLs directly to the system browser.
+      // dsh 桌面端拒绝空白标签页，并将 HTTP(S) 地址直接交给系统浏览器。
+      window.open(approvalUrl, '_blank', 'noopener,noreferrer')
+    } else if (!popup.closed) {
+      popup.opener = null
+      popup.location.replace(approvalUrl)
+    }
+  } catch (failure) {
+    popup?.close()
+    throw failure
+  }
+}
+
 export function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }

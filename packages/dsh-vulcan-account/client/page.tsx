@@ -3,7 +3,7 @@
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react'
 
 import { fill, type Key, type Translate } from './i18n'
-import { callAccount, GUARD_SECTION, messageOf, SETTINGS_SECTION, SITES, type AccountView, type HostWatch, type Site } from './shared'
+import { callAccount, GUARD_SECTION, messageOf, SETTINGS_SECTION, SITES, startAccountSignIn, type AccountView, type HostWatch } from './shared'
 
 export function AccountPage({ view, t }: { view: HostWatch<AccountView | null>; t: Translate }) {
   const live = useSyncExternalStore(view.subscribe, view.getSnapshot)
@@ -27,23 +27,6 @@ export function AccountPage({ view, t }: { view: HostWatch<AccountView | null>; 
       view.refresh()
     })
   }
-  const signIn = (site: Site): void => {
-    // Opened during the click, so no popup blocker stops it, and pointed at the page once known.
-    const popup = window.open('about:blank', '_blank')
-    act(async () => {
-      try {
-        const { approvalUrl } = await callAccount<{ approvalUrl: string }>('POST', `signin?site=${site}`)
-        if (popup !== null) {
-          popup.opener = null
-          popup.location.href = approvalUrl
-        }
-      } catch (failure) {
-        popup?.close()
-        throw failure
-      }
-    })
-  }
-
   let body: ReactNode
   if (live === undefined) body = <p className="vac-hint">{t('loading')}</p>
   else if (live === null) body = <div className="vac-alert bad">{t('unavailable')}</div>
@@ -67,7 +50,7 @@ export function AccountPage({ view, t }: { view: HostWatch<AccountView | null>; 
   } else if (live.signIn !== null) {
     body = (
       <div className="vac-between">
-        <span>{t('account.waiting')}</span>
+        <span role="status">{t('account.waiting')}</span>
         <span className="vac-inline">
           <a className="vac-link" href={live.signIn.approvalUrl} target="_blank" rel="noopener noreferrer">{t('account.openAgain')}</a>
           <button type="button" className="vac-btn sm" disabled={busy} onClick={() => { act(() => callAccount('POST', 'signin/cancel')) }}>
@@ -82,7 +65,7 @@ export function AccountPage({ view, t }: { view: HostWatch<AccountView | null>; 
         {live.account.reauthRequired === true ? <div className="vac-alert warn">{t('account.reauth')}</div> : null}
         <div className="vac-sites">
           {SITES.map(item => (
-            <button key={item.site} type="button" className="vac-site" disabled={busy} onClick={() => { signIn(item.site) }}>
+            <button key={item.site} type="button" className="vac-site" disabled={busy} onClick={() => { act(() => startAccountSignIn(item.site)) }}>
               <strong>{t(`account.site.${item.site}` as Key)}</strong>
               <span>{item.domain}</span>
               <span style={{ fontFamily: 'inherit', color: 'var(--vk-signal)' }}>{t('account.signIn')} →</span>
