@@ -1,6 +1,6 @@
 {
   "name": "@openvulcan/dsh-vulcan-reasoning",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Edit per-model thinking levels for pi-ai providers in DeepSeek Harness.",
   "license": "MIT",
   "repository": {

@@ -1,6 +1,6 @@
 {
   "name": "@openvulcan/dsh-vulcan-luaskills",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "LuaSkills for DeepSeek Harness: skill tools for the model, the codekit default skill, VM settings and the LuaSkills Hub. The runtime is installed on demand.",
   "license": "MIT",
   "icon": "./assets/luaskills-icon.svg",
