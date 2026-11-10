@@ -1,6 +1,6 @@
 {
   "name": "@openvulcan/dsh-vulcan-account",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "OpenVulcan account for DeepSeek Harness: sign in once, used by every VulcanCode plugin.",
   "license": "MIT",
   "icon": "./assets/account-icon.png",

@@ -1,6 +1,6 @@
 {
   "name": "@openvulcan/dsh-vulcancode",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "VulcanCode for DeepSeek Harness (dsh): OpenVulcan account, Vulcan Decision permission guard, interactive answers, LuaSkills, long-term memory and the VulcanCode look. Community plugins, not affiliated with DeepSeek.",
   "license": "MIT",
   "icon": "./assets/openvulcan-icon.svg",
