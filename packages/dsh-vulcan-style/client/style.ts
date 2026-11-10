@@ -197,6 +197,10 @@ const ROW = `
 .vst-switch:disabled { cursor: default; opacity: .6; }
 html[${SQUARE_ATTRIBUTE}] .vst-switch,
 html[${SQUARE_ATTRIBUTE}] .vst-switch::after { border-radius: 0; }
+
+/* The Windows frame defines its own radius for the main column and fullscreen panels. */
+/* Windows 框架为主内容列和全屏面板定义了独立的圆角。 */
+html[${SQUARE_ATTRIBUTE}][data-windows-titlebar] :has(> [data-shell-overlay]) { --dsh-windows-content-radius: 0px; }
 `
 
 /** Add the stylesheet once per page; returns a function that removes it again. */
