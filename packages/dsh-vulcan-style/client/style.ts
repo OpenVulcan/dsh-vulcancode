@@ -57,6 +57,12 @@ const themeVariables = (name: string, p: Palette): string => `html[${THEME_ATTRI
 const V = `html[${THEME_ATTRIBUTE}]`
 /** The settings dialog. */
 const SETTINGS = `${V} [data-shortcut-modal="settings"]`
+// The labelled settings title is inside the navigation in dsh 0.2.1 and beside it in 0.2.2.
+// dsh 0.2.1 的设置标题位于导航栏内，0.2.2 的标题与导航栏并列。
+const SETTINGS_TITLE = `:is(${SETTINGS}, ${SETTINGS} > nav:first-child) > [id][tabindex="-1"]`
+// The actions header is inside the content column in the 0.2.1 flex layout and beside the nav in the 0.2.2 grid.
+// 0.2.1 的操作栏在弹性布局的内容列内，0.2.2 的操作栏与导航栏同属网格的直接子项。
+const SETTINGS_ACTIONS = `:is(${SETTINGS} > nav:first-child + div > div:first-child, ${SETTINGS} > nav:nth-child(2) + div)`
 /** The workspace tree in the sidebar. */
 const TREE = `${V} [data-slot="sidebar.workspaces"] [role="tree"]`
 
@@ -109,14 +115,46 @@ ${V} [role="menu"][data-menu-material] { box-shadow: 0 0 0 1px var(--vulcan-line
 ${V} [role="dialog"][aria-modal="true"] { box-shadow: 0 0 0 1px var(--vulcan-line-strong), var(--vulcan-shadow-2); }
 ${V} [aria-hidden="true"]:has(+ [role="dialog"][aria-modal="true"]) { background: var(--vulcan-scrim); backdrop-filter: blur(3px) saturate(1.05); }
 
-/* Settings: an ember corner tick and a navigation well whose current page carries the ember edge. */
+/* Settings uses VulcanCode's framed navigation, fixed header and independently scrolling body. */
+/* 设置使用 VulcanCode 的带边框导航、固定页头和独立滚动正文。 */
 ${SETTINGS}::before { content: ""; position: absolute; z-index: 1; top: -1px; left: -1px; width: var(--vulcan-tick-w); height: 2px; background: var(--vulcan-ember); pointer-events: none; }
 ${SETTINGS} > nav { background: var(--vulcan-ground-2); box-shadow: inset -1px 0 0 var(--vulcan-line); }
 ${SETTINGS} > nav button { color: var(--vulcan-ink-2); }
 ${SETTINGS} > nav button:hover { background: var(--vulcan-hover); color: var(--vulcan-ink); }
-${SETTINGS} > nav button[aria-current="true"] { background: var(--vulcan-panel); color: var(--vulcan-ink); box-shadow: inset 2px 0 0 var(--vulcan-ember), 0 0 0 1px var(--vulcan-line); }
+${SETTINGS} > nav button[aria-current="true"] { background: var(--vulcan-panel); color: var(--vulcan-ink); box-shadow: inset 2px 0 0 var(--vulcan-ember), inset 0 0 0 1px var(--vulcan-line); }
 ${SETTINGS} > nav button[aria-current="true"] svg { color: var(--vulcan-ember); }
-${V} [data-slot="settings.header"] { color: var(--vulcan-ink-3); font-family: var(--vulcan-label-font); font-size: 12px; font-weight: 500; letter-spacing: var(--vulcan-label-track); text-transform: var(--vulcan-label-case); }
+${SETTINGS} > nav button:focus-visible { outline: 2px solid var(--vulcan-ink-3); outline-offset: -3px; }
+${SETTINGS} [data-slot="settings.header"] { color: var(--vulcan-ink); font-family: var(--vulcan-label-font); font-size: 14px; font-weight: 600; letter-spacing: var(--vulcan-label-track); text-transform: var(--vulcan-label-case); }
+${SETTINGS_ACTIONS} + div { overscroll-behavior: contain; }
+
+/* Match dsh's wide-layout breakpoint so its compact navigation remains usable on narrow screens. */
+/* 沿用 dsh 的宽屏断点，使窄屏上的紧凑导航保持可用。 */
+@media (min-width: 768px) {
+  ${SETTINGS} {
+    --vulcan-settings-nav: clamp(188px, 20vw, 228px);
+    --vulcan-settings-gutter: clamp(20px, 3vw, 36px);
+    width: min(1160px, calc(100vw - 48px));
+  }
+  ${SETTINGS}:has(> nav:nth-child(2)) { grid-template-columns: var(--vulcan-settings-nav) minmax(0, 1fr); }
+  ${SETTINGS} > nav { padding-block-end: 12px; }
+  ${SETTINGS} > nav:first-child { width: var(--vulcan-settings-nav); gap: 10px; padding-block-start: 0; }
+  ${SETTINGS_TITLE}, ${SETTINGS_ACTIONS} {
+    box-sizing: border-box;
+    height: 60px;
+    align-items: center;
+    border-bottom: 1px solid var(--vulcan-line);
+  }
+  ${SETTINGS_TITLE} {
+    display: flex;
+    flex: none;
+    padding: 0 18px;
+    background: var(--vulcan-ground-2);
+    box-shadow: inset -1px 0 0 var(--vulcan-line);
+  }
+  ${SETTINGS} > nav:first-child > [id][tabindex="-1"] { margin-inline: -12px; }
+  ${SETTINGS_ACTIONS} { padding: 0 var(--vulcan-settings-gutter); background: var(--vulcan-panel); }
+  ${SETTINGS_ACTIONS} + div { padding: 20px var(--vulcan-settings-gutter) 28px; background: var(--vulcan-panel); }
+}
 `
 
 const ROW = `
