@@ -263,6 +263,18 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
+  packages/dsh-vulcan-reasoning:
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.19.2
+      '@types/react':
+        specifier: ^18.3.31
+        version: 18.3.31
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+
   packages/dsh-vulcan-style:
     devDependencies:
       '@deepseek-ai/cordis':
@@ -301,6 +313,9 @@ importers:
       '@openvulcan/dsh-vulcan-memory':
         specifier: workspace:*
         version: link:../dsh-vulcan-memory
+      '@openvulcan/dsh-vulcan-reasoning':
+        specifier: workspace:*
+        version: link:../dsh-vulcan-reasoning
       '@openvulcan/dsh-vulcan-style':
         specifier: workspace:*
         version: link:../dsh-vulcan-style

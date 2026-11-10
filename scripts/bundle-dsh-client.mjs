@@ -6,9 +6,10 @@
 
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+// Package scripts run in the package whose browser modules are being bundled.
+// 包脚本在待打包浏览器模块所属的包目录内运行。
+const root = process.cwd()
 const { name } = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'))
 /** Requests answered by dsh's baseline page module table (`packages/client/web/src/platform.ts`). */
 const PLATFORM_MODULES = new Set(['react', 'react/jsx-runtime', 'react-dom', '@deepseek-ai/dsh-client-ui-primitives'])

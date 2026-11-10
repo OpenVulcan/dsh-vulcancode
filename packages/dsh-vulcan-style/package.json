@@ -26,7 +26,7 @@
     "assets"
   ],
   "scripts": {
-    "build": "node -e \"for (const d of ['lib','build/client']) fs.rmSync(d,{recursive:true,force:true})\" && tsc -p tsconfig.json && tsc -p tsconfig.client.json && node scripts/bundle-client.mjs",
+    "build": "node -e \"for (const d of ['lib','build/client']) fs.rmSync(d,{recursive:true,force:true})\" && tsc -p tsconfig.json && tsc -p tsconfig.client.json && node ../../scripts/bundle-dsh-client.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
     "test": "tsc -p tsconfig.json && tsc -p tsconfig.client.json && node --test \"lib/**/*.test.js\""
   },

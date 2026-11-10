@@ -15,3 +15,5 @@
           name: '@openvulcan/dsh-vulcan-luaskills'
         - id: vulcan-memory
           name: '@openvulcan/dsh-vulcan-memory'
+        - id: vulcan-reasoning
+          name: '@openvulcan/dsh-vulcan-reasoning'

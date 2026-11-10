@@ -35,6 +35,7 @@ dsh plugin add @openvulcan/dsh-vulcancode
 | 交互式回答 | 模型可以用 VulcanCode 的 `ui-*` 组件作答，在对话中渲染；启用后默认开启，可按会话关闭 |
 | LuaSkills | 技能以工具形式提供给 AI，默认技能 codekit（代码导航）；运行库约 190 MB，在「设置 › LuaSkills」中按需安装，装好即自动接入。侧栏的 LuaSkills 页面管理已装技能并连接 LuaSkills Hub |
 | Vulcan 界面风格 | VulcanCode 的主题、直角与配色 |
+| 自定义思考级别 | 在「设置 › 模型」的 pi-ai 提供商卡片中，为每个模型配置可选级别及接口传输值 |
 | 长期记忆 | VulcanCode 的 Markdown 长期记忆：AI 用 `memory_outline`、`memory_search`、`memory_write` 维护用户画像、空间记忆与项目记忆，每次会话开始时注入一份快照。侧栏的「长期记忆」页面可编辑、调整注入预算，并导入导出 |
 
 > **我们承诺：云端命令判定模型永久免费提供。**（2026 年 10 月 27 日）
@@ -63,6 +64,7 @@ dsh plugin add @openvulcan/dsh-vulcancode
 | `@openvulcan/dsh-vulcan-answers` | 交互式回答插件 |
 | `@openvulcan/dsh-vulcan-luaskills` | LuaSkills 插件：运行库安装、技能工具、VM 设置与 Hub |
 | `@openvulcan/dsh-vulcan-style` | 界面风格插件 |
+| `@openvulcan/dsh-vulcan-reasoning` | pi-ai 模型的思考级别配置插件 |
 | `@openvulcan/dsh-vulcan-memory` | 长期记忆插件：记忆工具、会话快照注入、memory-curator 技能与记忆页面 |
 | `@openvulcan/vulcan-decision` | 判定引擎与命令行 `vulcan-decision` |
 | `@openvulcan/openvulcan-account` | OpenVulcan 账号库：登录、刷新与凭据存储接口 |
