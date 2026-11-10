@@ -163,9 +163,10 @@ ${V} [data-vulcan-settings-header] > p { max-width: 70ch; margin: 0; color: var(
   ${SETTINGS} > nav:first-child > [id][tabindex="-1"] { margin-inline: -12px; }
   ${SETTINGS_ACTIONS} { padding: 0 var(--vulcan-settings-gutter); background: var(--vulcan-panel); }
   ${SETTINGS_ACTIONS} + div { padding: 20px var(--vulcan-settings-gutter) 28px; background: var(--vulcan-panel); }
-  /* Native settings sections still carry their original width caps. Widen only their page roots. */
-  /* dsh 原生设置页仍带有原始宽度上限，此处只展开各页面的根节点。 */
-  ${SETTINGS_ACTIONS} + div > [data-slot="settings.section"] > :not([data-vulcan-settings-width]) {
+  /* The native settings pages and the nested built-in plugin tabs each own a width cap. */
+  /* dsh 原生设置页和内置插件的嵌套标签页各自带有宽度上限。 */
+  ${SETTINGS_ACTIONS} + div > [data-slot="settings.section"] > :not([data-vulcan-settings-width]),
+  ${SETTINGS_ACTIONS} + div > [data-slot="settings.section"] [data-slot="settings.plugins.tab"] > :not([data-vulcan-settings-width]) {
     box-sizing: border-box;
     inline-size: 100%;
     min-inline-size: 0;

@@ -14,7 +14,7 @@ import {
 export function SettingsPage({ view, t }: { view: HostWatch<RuntimeView | null>; t: Translate }) {
   const live = useRuntime(view)
   return (
-    <div className="vac vac-page" data-vulcan-settings-width="readable">
+    <div className="vac vac-page" data-vulcan-settings-width="full">
       <header className="vac-page-head" data-vulcan-settings-header>
         <h2>{t('settingsPage.title')}</h2>
         <p className="vac-lead">{t('settingsPage.lead')}</p>
