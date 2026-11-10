@@ -3,7 +3,7 @@
  * one-click sign-in at either site. The rail shows the mark alone and opens the account settings.
  */
 
-import { useEffect, useState, useSyncExternalStore } from 'react'
+import { useEffect, useId, useState, useSyncExternalStore } from 'react'
 
 import { fill, type Key, type Translate } from './i18n'
 import { callAccount, messageOf, SITES, startAccountSignIn, type AccountProfile, type AccountView, type HostWatch } from './shared'
@@ -124,12 +124,18 @@ export function AccountFooter({ wide, t, view, profile, openSettings }: FooterPr
   )
 }
 
-/** The OpenVulcan mark: the chevron takes the text colour, the flame keeps its own. */
-function VulcanMark() {
+/**
+ * Render the OpenVulcan mark with the requested square size, or use the footer dimensions when omitted.
+ * 按指定的方形尺寸渲染 OpenVulcan 标识，未指定时使用侧栏底部的尺寸。
+ */
+export function VulcanMark({ size }: { readonly size?: number }) {
+  // The footer and settings can render at once, so each SVG owns its gradient reference.
+  // 侧栏底部与设置页可以同时渲染，因此每个 SVG 使用独立的渐变标识。
+  const flameId = useId()
   return (
-    <svg className="vac-foot-mark" viewBox="32 29 232 259" aria-hidden="true" focusable="false">
+    <svg className={size === undefined ? 'vac-foot-mark' : undefined} width={size} height={size} viewBox="32 29 232 259" aria-hidden="true" focusable="false">
       <defs>
-        <linearGradient id="vac-foot-flame" x1="0%" y1="100%" x2="100%" y2="0%">
+        <linearGradient id={flameId} x1="0%" y1="100%" x2="100%" y2="0%">
           <stop offset="0%" stopColor="#FF6527" />
           <stop offset="100%" stopColor="#F44E1C" />
         </linearGradient>
@@ -141,7 +147,7 @@ function VulcanMark() {
       />
       <path
         d="M 73 0 C 64 14 51 28 38 40 C 21 55 7 68 2 87 C -2 107 8 129 25 150 C 39 134 53 119 67 107 C 82 95 91 79 93 60 C 95 40 86 18 73 0 Z"
-        fill="url(#vac-foot-flame)"
+        fill={`url(#${flameId})`}
         transform="translate(169 29)"
       />
     </svg>

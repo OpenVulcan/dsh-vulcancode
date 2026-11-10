@@ -5,7 +5,7 @@
  */
 
 import { en, NAMESPACE, zh, type Translate } from './i18n'
-import { AccountFooter } from './footer'
+import { AccountFooter, VulcanMark } from './footer'
 import { AccountPage, PluginPageSummary } from './page'
 import { callAccount, HostWatch, SETTINGS_SECTION, SUITE_PACKAGE, type AccountProfile, type AccountView } from './shared'
 import { installStyle } from './style'
@@ -45,6 +45,12 @@ export function apply(ctx: ClientContext): void {
     locale: NAMESPACE,
     inject: () => ({ view }),
   }, ({ t, view: injected }) => <AccountPage view={injected} t={t as Translate} />))
+  // dsh 0.2.2 declares this optional slot. The injection waits on older hosts.
+  // dsh 0.2.2 声明了此可选插槽，旧版宿主上的注入会保持等待。
+  ctx.slots.inject('settings.section.icon', () => ctx.slots.register({
+    name: 'settings.section.icon',
+    id: SETTINGS_SECTION,
+  }, VulcanMark))
   // Above Settings in the sidebar foot.
   ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register<{ view: HostWatch<AccountView | null>; profile: HostWatch<AccountProfile | null>; open: () => void }>({
     name: 'sidebar.footer.action',

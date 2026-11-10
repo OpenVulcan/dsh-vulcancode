@@ -107,6 +107,12 @@ export function apply(ctx: ClientContext): void {
     locale: NAMESPACE,
     inject: withServices,
   }, ({ t, services: injected }) => <SettingsPage services={injected} t={t as Translate} />))
+  // dsh 0.2.2 declares this optional slot. The injection waits on older hosts.
+  // dsh 0.2.2 声明了此可选插槽，旧版宿主上的注入会保持等待。
+  ctx.slots.inject('settings.section.icon', () => ctx.slots.register({
+    name: 'settings.section.icon',
+    id: SETTINGS_SECTION,
+  }, SettingsIcon))
   ctx.slots.inject('plugins.detail.badge', () => ctx.slots.register({
     name: 'plugins.detail.badge',
     id: 'vulcan-decision-guard-conflict',
@@ -149,4 +155,17 @@ export function apply(ctx: ClientContext): void {
       }
     },
   }, QuickSetting))
+}
+
+/**
+ * Render the approval shield at the square size requested by dsh's settings navigation.
+ * 按 dsh 设置导航请求的方形尺寸渲染审批盾牌图标。
+ */
+function SettingsIcon({ size }: { readonly size: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+      <path d="M12 3 20 6v5c0 4.7-2.8 7.9-8 10-5.2-2.1-8-5.3-8-10V6l8-3Z" />
+      <path d="m9 12 2 2 4-4" />
+    </svg>
+  )
 }

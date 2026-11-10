@@ -61,6 +61,12 @@ export interface ClientContext {
       },
       component: (props: SettingsSectionProps & I) => import('react').ReactNode,
     ): () => void
+    /** Register an icon at the matching settings section id when dsh declares the icon slot. */
+    /** dsh 声明图标插槽后，为对应的设置分区标识注册图标。 */
+    register(
+      options: { readonly name: 'settings.section.icon'; readonly id: string },
+      component: (props: PanelIconProps) => import('react').ReactNode,
+    ): () => void
     register<I extends object>(
       options: { readonly name: 'main'; readonly key: string; readonly locale: string; readonly inject: () => I },
       component: (props: MainPanelProps & I) => import('react').ReactNode,
