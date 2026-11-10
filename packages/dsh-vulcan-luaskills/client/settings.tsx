@@ -14,11 +14,11 @@ import {
 export function SettingsPage({ view, t }: { view: HostWatch<RuntimeView | null>; t: Translate }) {
   const live = useRuntime(view)
   return (
-    <div className="vac vac-page">
-      <div className="vac-page-head">
+    <div className="vac vac-page" data-vulcan-settings-width="readable">
+      <header className="vac-page-head" data-vulcan-settings-header>
         <h2>{t('settingsPage.title')}</h2>
         <p className="vac-lead">{t('settingsPage.lead')}</p>
-      </div>
+      </header>
       {live === undefined ? <p className="vac-hint">{t('loading')}</p>
         : live === null ? <div className="vac-alert bad">{t('unavailable')}</div>
           : (

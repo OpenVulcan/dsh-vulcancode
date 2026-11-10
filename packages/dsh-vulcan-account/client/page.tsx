@@ -78,11 +78,11 @@ export function AccountPage({ view, t }: { view: HostWatch<AccountView | null>; 
 
   const failure = live?.signInError === undefined ? error : fill(t('account.failed'), { error: live.signInError })
   return (
-    <div className="vac vac-page">
-      <div className="vac-page-head">
+    <div className="vac vac-page" data-vulcan-settings-width="readable">
+      <header className="vac-page-head" data-vulcan-settings-header>
         <h2>{t('page.title')}</h2>
         <p className="vac-lead">{t('page.lead')}</p>
-      </div>
+      </header>
       <section className="vac-section">
         <div className="vac-section-head">
           <div>

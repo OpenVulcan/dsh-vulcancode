@@ -126,12 +126,12 @@ export function RecordsPage({ t, recording, onBack }: { t: Translate; recording:
   )
 
   return (
-    <div className="vdg vdg-page">
-      <div className="vdg-page-head">
+    <div className="vdg vdg-page" data-vulcan-settings-width="full">
+      <header className="vdg-page-head" data-vulcan-settings-header>
         <button type="button" className="vdg-link" onClick={onBack}>← {t('records.back')}</button>
-        <h2 style={{ marginTop: 8 }}>{t('records.title')}</h2>
+        <h2>{t('records.title')}</h2>
         <p className="vdg-lead">{t('records.entryHint')}</p>
-      </div>
+      </header>
       {recording ? null : <div className="vdg-alert warn">{t('records.paused')}</div>}
       {page === undefined
         ? (

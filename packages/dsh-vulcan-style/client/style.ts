@@ -127,6 +127,15 @@ ${SETTINGS} > nav button:focus-visible { outline: 2px solid var(--vulcan-ink-3);
 ${SETTINGS} [data-slot="settings.header"] { color: var(--vulcan-ink); font-family: var(--vulcan-label-font); font-size: 14px; font-weight: 600; letter-spacing: var(--vulcan-label-track); text-transform: var(--vulcan-label-case); }
 ${SETTINGS_ACTIONS} + div { overscroll-behavior: contain; }
 
+/* Preference pages use a readable measure; management pages use the available width. */
+/* 偏好设置页采用便于阅读的列宽，管理页使用可用的完整宽度。 */
+${V} [data-vulcan-settings-width] { width: 100%; min-width: 0; }
+${V} [data-vulcan-settings-width="readable"] { max-width: 44rem; margin-inline: auto; }
+${V} [data-vulcan-settings-width="full"] { max-width: none; }
+${V} [data-vulcan-settings-header] { display: grid; justify-items: start; gap: 6px; padding-bottom: 12px; border-bottom: 1px solid var(--vulcan-line); }
+${V} [data-vulcan-settings-header] > h2 { margin: 0; color: var(--vulcan-ink); font-size: 20px; font-weight: 600; line-height: 1.25; }
+${V} [data-vulcan-settings-header] > p { max-width: 70ch; margin: 0; color: var(--vulcan-ink-2); }
+
 /* Match dsh's wide-layout breakpoint so its compact navigation remains usable on narrow screens. */
 /* 沿用 dsh 的宽屏断点，使窄屏上的紧凑导航保持可用。 */
 @media (min-width: 768px) {

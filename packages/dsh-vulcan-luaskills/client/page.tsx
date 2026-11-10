@@ -41,11 +41,11 @@ export function LuaSkillsPage({ view, t, openSettings }: { view: HostWatch<Runti
 
   return (
     <div className="vac vls-panel">
-      <div className="vac vac-page vls-panel-inner">
-        <div className="vac-page-head">
+      <div className="vac vac-page vls-panel-inner" data-vulcan-settings-width="full">
+        <header className="vac-page-head" data-vulcan-settings-header>
           <h2>{t('panel')}</h2>
           <p className="vac-lead">{t('page.lead')}</p>
-        </div>
+        </header>
         {live === undefined ? <p className="vac-hint">{t('loading')}</p> : null}
         {live === null ? <div className="vac-alert bad">{t('unavailable')}</div> : null}
         {live != null && !ready ? (

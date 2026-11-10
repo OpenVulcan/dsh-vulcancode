@@ -399,11 +399,11 @@ export function SettingsPage({ services, t }: { services: Services; t: Translate
     services.endpoints.refresh()
   }
   return (
-    <div className="vdg vdg-page">
-      <div className="vdg-page-head">
+    <div className="vdg vdg-page" data-vulcan-settings-width="full">
+      <header className="vdg-page-head" data-vulcan-settings-header>
         <h2>{t('page.title')}</h2>
         <p className="vdg-lead">{t('page.lead')}</p>
-      </div>
+      </header>
       {settings.writable ? null : <div className="vdg-alert warn">{t('readOnly')}</div>}
       <ErrorLine text={settings.error} />
       <StatusSection services={services} t={t} value={value} live={live} />
