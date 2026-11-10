@@ -10,8 +10,11 @@
 **The VulcanCode experience in DeepSeek Harness (dsh)**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![npm](https://img.shields.io/npm/v/@openvulcan/dsh-vulcancode)](https://www.npmjs.com/package/@openvulcan/dsh-vulcancode)
 
 [简体中文](README.md) | **English**
+
+[Features](#features) · [Architecture and packages](#architecture-and-packages) · [Quick start](#quick-start) · [Development](#development)
 
 </div>
 
@@ -19,58 +22,90 @@
 
 ## About
 
-dsh-vulcancode is a set of community plugins for DeepSeek Harness (dsh). One package brings several of
-VulcanCode's core features. It supports dsh `0.2.1-rc.2` and later, below `0.3.0`:
+dsh-vulcancode is a community plugin suite for DeepSeek Harness (dsh). Install one package to add VulcanCode styling, interactive answers, auto approval, LuaSkills, long-term memory, and per-model thinking settings for pi-ai.
+
+DeepSeek develops dsh independently of this community project.
+
+## Features
+
+- **Desktop workspace** with VulcanCode colors, an independent square-corner toggle, and settings pages that use the wider content area.
+- **Interactive results** with charts, diagrams, and decision cards rendered in the conversation. Selections from decision cards can go back into the composer.
+- **Tool-call review** with a cloud or local Vulcan Decision model, optional LLM review, and user confirmation before execution.
+- **Reusable skills and memory** through LuaSkills tools and persistent Markdown memory for the user, space, and project.
+- **Per-model thinking settings** for the levels shown in the pi-ai model picker and the values sent to each model endpoint.
+
+## Architecture and packages
+
+dsh loads seven plugins through the suite's `cordis.patch.yml`. The approval plugin calls the decision engine and uses `openvulcanAccount` for cloud credentials. The account plugin and the decision engine share the account library. The release bundles all nine workspace dependencies in the suite's tarball.
+
+### Suite entry point
+
+#### `@openvulcan/dsh-vulcancode`
+
+Declares the supported dsh versions and the plugin group. Install it with `dsh plugin add @openvulcan/dsh-vulcancode` and find the suite on the Plugins page. See [packages/dsh-vulcancode](packages/dsh-vulcancode).
+
+### dsh plugins
+
+#### `@openvulcan/dsh-vulcan-account`
+
+Open Settings › OpenVulcan account, choose Global or China, and approve the device in your browser. The same page shows account status and lets you sign out. The plugin keeps credentials in the dsh credential store and exposes the `openvulcanAccount` service for integrations such as cloud judgment. See [packages/dsh-vulcan-account](packages/dsh-vulcan-account).
+
+#### `@openvulcan/dsh-decision-guard`
+
+Open Settings › Auto approval to choose how auto approval integrates with permission presets, configure cloud or local judgment, set LLM review and confirmation rules, and inspect approval records. The decision model classifies tool calls as allow, review, or block. Calls without an allow verdict proceed to review, a user prompt, or denial according to the configuration. See [limits of auto approval](#limits-of-auto-approval) and the [plugin README](packages/dsh-decision-guard/README.md).
+
+#### `@openvulcan/dsh-vulcan-answers`
+
+Renders the model's `ui-*` code fences in chat as comparisons, charts, flowcharts, sequence diagrams, and decision cards. A decision can be inserted into the composer or sent. Interactive mode is enabled by default. The Answers control in the composer switches the current conversation to standard Markdown starting with the next request. See [packages/dsh-vulcan-answers](packages/dsh-vulcan-answers).
+
+#### `@openvulcan/dsh-vulcan-luaskills`
+
+Install the roughly 190 MB runtime on demand in Settings › LuaSkills. Installation adds CodeKit for code navigation and makes the skill tools available automatically. Settings cover VM pools, the tool cache, managed Python and Node runtimes, and network access. Use the LuaSkills sidebar page to enable, disable, update, or remove skills, or search for and install new ones from the Hub. See [packages/dsh-vulcan-luaskills](packages/dsh-vulcan-luaskills).
+
+#### `@openvulcan/dsh-vulcan-memory`
+
+Stores the user profile, space memory, and project memory in Markdown. It provides `memory_outline`, `memory_search`, `memory_write`, and the `memory-curator` skill. Each conversation starts with a snapshot within the configured budget. Use the Long-term memory sidebar page to edit memory, adjust the budget, or import and export it. Markdown is the available memory mode. See [packages/dsh-vulcan-memory](packages/dsh-vulcan-memory).
+
+#### `@openvulcan/dsh-vulcan-reasoning`
+
+In Settings › Models, open Custom thinking levels on a configured pi-ai provider card. For each model, follow the catalog, disable thinking, or choose the levels offered in chat and their wire values. After saving, select a level in the conversation's model picker. Use values supported by that model's endpoint. See [packages/dsh-vulcan-reasoning](packages/dsh-vulcan-reasoning).
+
+#### `@openvulcan/dsh-vulcan-style`
+
+Use Vulcan style under Settings › General to follow the system or choose Light, Dark, Command, or the built-in dsh theme. Square corners work with any theme and apply to surfaces such as the Windows desktop content frame. The wider settings layout gives the model catalog, built-in plugins, and LuaSkills more room. See [packages/dsh-vulcan-style](packages/dsh-vulcan-style).
+
+### Shared libraries and CLI
+
+#### `@openvulcan/vulcan-decision`
+
+Provides `allow`, `review`, and `block` verdicts through OpenVulcan cloud endpoints or an optional local runtime. The included `vulcan-decision` CLI can probe the cloud, inspect hardware, manage local runtime packs and models, and judge a single tool call. See the [decision engine and CLI README](packages/vulcan-decision/README.md).
+
+#### `@openvulcan/openvulcan-account`
+
+Handles device authorization, credential refresh, account profiles, and device sign-out through the `CredentialStore` interface. The dsh plugin uses the host credential store, and the standalone CLI uses the library's file-backed store. See [packages/openvulcan-account](packages/openvulcan-account).
+
+## Quick start
+
+The suite declares support for dsh `>=0.2.1-rc.2 <0.3.0`.
 
 ```sh
 dsh plugin add @openvulcan/dsh-vulcancode
 ```
 
-This project is not affiliated with DeepSeek; dsh is a DeepSeek product.
+### Usage
 
-| Part | What it does |
-| --- | --- |
-| OpenVulcan account | Sign in once; every part of the suite uses it. The credential is kept in dsh's credential store. Settings are under Settings › OpenVulcan account |
-| Auto approval (Vulcan Decision) | Before every tool call, a dedicated decision model answers allow, review or block; calls not allowed can go to a review LLM, then to you or a denial |
-| Interactive answers | The model can answer with VulcanCode's `ui-*` components, rendered in the chat; on by default once enabled, and can be turned off per session |
-| LuaSkills | Skills as tools for the AI, with the default skill codekit (code navigation). The runtime (about 190 MB) is installed on demand from Settings › LuaSkills and connects on its own once installed. The LuaSkills page in the sidebar manages installed skills and the LuaSkills Hub |
-| Vulcan look | VulcanCode's themes, square corners and colors |
-| Custom thinking levels | Configure selectable thinking levels and their wire values per model in the pi-ai provider card under Settings › Models |
-| Long-term memory | VulcanCode's Markdown long-term memory: the AI keeps your profile, space memory and project memory with `memory_outline`, `memory_search` and `memory_write`, and a snapshot is injected when each session starts. The Long-term memory page in the sidebar edits it, sets the injection budget, and imports and exports |
+1. Restart dsh after installing. For cloud judgment, complete browser authorization in Settings › OpenVulcan account. Local judgment works without signing in.
+2. Configure judgment in Settings › Auto approval. Select Auto in the permission picker to use judgment with full permissions in the current conversation. Standalone switch applies judgment to all conversations and keeps their existing file sandboxes.
+3. To use skill tools, install the runtime in Settings › LuaSkills. The page shows progress and the tools appear automatically when installation finishes.
+4. Styling, interactive answers, and Markdown memory are enabled by default. Configure a pi-ai provider before editing a model's thinking levels.
 
-> **Our commitment: the cloud command decision model is free, permanently.** (October 27, 2026)
-
-## Usage
-
-1. Restart dsh after installing, open Settings › OpenVulcan account, and sign in at the Global or China site.
-2. Open Settings › Auto approval, then choose "Auto review" in the permission picker or switch the integration
-   to "Standalone switch". Without signing in, you can judge with a local model instead.
-3. For LuaSkills, open Settings › LuaSkills and install the runtime; progress shows on the page, and the skill tools appear when it finishes.
-4. Interactive answers, the look and long-term memory work once installed; adjust them in their own settings or sidebar page.
+> **We commit to keeping the cloud command judgment model free forever.** (October 27, 2026)
 
 ## Limits of auto approval
 
-- It guards against the AI's **mistakes** when running commands, not against the AI **deliberately getting
-  around it** (for example by writing a script and then running it).
-- No error is ever treated as allow; unattended sessions never ask you, and a call the review does not allow
-  is denied.
-- Auto approval lowers the odds of an accident; it does not guarantee that every risk is refused. Keep using a
-  sandbox, Git and backups.
-
-## Packages
-
-| Package | Description |
-| --- | --- |
-| `@openvulcan/dsh-vulcancode` | The suite, the only package dsh installs; all others are bundled inside |
-| `@openvulcan/dsh-vulcan-account` | The OpenVulcan account plugin; offers the `openvulcanAccount` service to the others |
-| `@openvulcan/dsh-decision-guard` | The auto approval plugin |
-| `@openvulcan/dsh-vulcan-answers` | The interactive answers plugin |
-| `@openvulcan/dsh-vulcan-luaskills` | The LuaSkills plugin: runtime install, skill tools, VM settings and the Hub |
-| `@openvulcan/dsh-vulcan-style` | The look plugin |
-| `@openvulcan/dsh-vulcan-reasoning` | The pi-ai model thinking-level editor |
-| `@openvulcan/dsh-vulcan-memory` | The long-term memory plugin: memory tools, the session snapshot, the memory-curator skill and the memory page |
-| `@openvulcan/vulcan-decision` | The decision engine and the `vulcan-decision` command line |
-| `@openvulcan/openvulcan-account` | The OpenVulcan account library: sign-in, refresh and the credential store interface |
+- It reduces accidental command execution risks. An agent deliberately bypassing the check can still write a script and run it.
+- Errors never grant approval. In unattended sessions, a call that requires review runs only if the reviewer explicitly allows it.
+- Use auto approval alongside the sandbox, Git, and backups.
 
 ## Development
 
