@@ -1,6 +1,6 @@
 {
   "name": "@openvulcan/dsh-vulcan-memory",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Long-term Markdown memory for DeepSeek Harness, ported from VulcanCode: memory tools for the model, a per-conversation memory snapshot, the memory-curator skill and a memory page with import and export.",
   "license": "MIT",
   "icon": "./assets/memory-icon.png",
