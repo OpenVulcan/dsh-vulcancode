@@ -50,3 +50,33 @@ test('an idle timeout never stops a judgement already using the worker', async t
   t.mock.timers.tick(500)
   assert.equal(stops, 1)
 })
+
+test('closing rejects queued work and waits for the current process to release its files', async () => {
+  const engine = new LocalEngine({} as DecisionHome)
+  const selection: LocalSelection = { pack: 'onnx-cpu', model: 'fixture' }
+  const input: JudgeInput = { settings: DEFAULT_OPTIONS, rendered: 'fixture' }
+  const loaded: LoadResult = { load_seconds: 0, device: 'cpu', format: 'onnx-delivery', root: 'fixture' }
+  const start = Promise.withResolvers<void>()
+  const answer = Promise.withResolvers<ModelResult[]>()
+  const exit = Promise.withResolvers<void>()
+  let stopped = false
+  const internals = engine as unknown as { worker: unknown; current: unknown }
+  internals.worker = {
+    running: true,
+    judge() { start.resolve(); return answer.promise },
+    async stop() {
+      answer.reject(new Error('worker stopped'))
+      await exit.promise
+    },
+  }
+  internals.current = { key: `${selection.pack}\n${selection.model}`, selection, loading: Promise.resolve(loaded), loaded }
+  const running = assert.rejects(engine.judge(selection, [input]), /worker stopped/)
+  await start.promise
+  const waiting = assert.rejects(engine.judge(selection, [input]), { code: 'backend_unavailable' })
+  const stop = engine.close().then(() => { stopped = true })
+  await new Promise<void>(resolve => setImmediate(resolve))
+  assert.equal(stopped, false)
+  exit.resolve()
+  await Promise.all([running, waiting, stop])
+  await assert.rejects(engine.warm(selection), { code: 'backend_unavailable' })
+})

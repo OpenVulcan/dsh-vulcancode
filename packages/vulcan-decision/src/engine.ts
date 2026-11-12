@@ -57,7 +57,15 @@ export class DecisionEngine {
     return { ...result!, backend: 'local', model: settings.local.model, via: settings.local.pack, elapsed_ms: Math.round(performance.now() - started) }
   }
 
-  stop(): void {
-    this.local.stop()
+  /** Stop the loaded local worker without closing the decision engine.
+   *  停止已加载的本地进程，保留判定引擎供后续使用。 */
+  stop(): Promise<void> {
+    return this.local.stop()
+  }
+
+  /** Close the local backend permanently and wait for its worker to exit.
+   *  永久关闭本地后端，并等待其进程退出。 */
+  close(): Promise<void> {
+    return this.local.close()
   }
 }

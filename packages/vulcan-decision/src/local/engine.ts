@@ -58,6 +58,11 @@ export class LocalEngine {
   private worker: WorkerProcess | undefined
   private current: { readonly key: string; readonly selection: LocalSelection; loading: Promise<LoadResult>; loaded?: LoadResult } | undefined
   private idleTimer: NodeJS.Timeout | undefined
+  // Retain the exit promise until the worker has released the runtime files.
+  // 在进程释放运行库文件前保留退出任务。
+  private exiting: Promise<void> | undefined
+  private closing: Promise<void> | undefined
+  private closed = false
   /** Loads and merged judgements run one at a time, in arrival order. */
   private queue: Promise<unknown> = Promise.resolve()
   /** Callers waiting for the next merged judgement. */
@@ -82,6 +87,7 @@ export class LocalEngine {
    */
   judge(selection: LocalSelection, inputs: readonly JudgeInput[]): Promise<ModelResult[]> {
     return new Promise((resolve, reject) => {
+      this.assertOpen()
       this.waiting.push({ selection, inputs, resolve, reject })
       if (this.drainQueued) return
       this.drainQueued = true
@@ -98,17 +104,49 @@ export class LocalEngine {
   async warm(selection: LocalSelection): Promise<LoadResult> {
     const run = this.queue.then(async () => {
       clearTimeout(this.idleTimer)
-      try { return await this.ensure(selection) } finally { this.armIdle() }
+      try {
+        const loaded = await this.ensure(selection)
+        this.assertOpen()
+        return loaded
+      } finally {
+        this.armIdle()
+      }
     })
     this.queue = run.catch(() => {})
     return await run
   }
 
-  stop(): void {
+  /** Stop the current worker and wait for exit. The engine can still load another worker.
+   *  停止当前进程并等待退出。引擎仍可加载新的进程。 */
+  stop(): Promise<void> {
     clearTimeout(this.idleTimer)
-    void this.worker?.stop()
+    const worker = this.worker
     this.worker = undefined
     this.current = undefined
+    if (worker === undefined) return this.exiting ?? Promise.resolve()
+    const exiting = worker.stop().finally(() => {
+      if (this.exiting === exiting) this.exiting = undefined
+    })
+    this.exiting = exiting
+    return exiting
+  }
+
+  /** Close permanently, reject queued requests, and await both the worker and active queue.
+   *  永久关闭，拒绝排队请求，并等待进程和正在执行的队列结束。 */
+  close(): Promise<void> {
+    if (this.closing === undefined) {
+      this.closed = true
+      const error = new DecisionError('backend_unavailable', 'the local model engine is closed')
+      for (const entry of this.waiting.splice(0)) entry.reject(error)
+      this.closing = Promise.all([this.stop(), this.queue]).then(() => {})
+    }
+    return this.closing
+  }
+
+  /** Reject work after the owning plugin or command has closed the engine.
+   *  插件或命令关闭引擎后，拒绝继续执行请求。 */
+  private assertOpen(): void {
+    if (this.closed) throw new DecisionError('backend_unavailable', 'the local model engine is closed')
   }
 
   /** Answer every waiting caller, one selection at a time in arrival order. */
@@ -132,12 +170,14 @@ export class LocalEngine {
     clearTimeout(this.idleTimer)
     try {
       const loaded = await this.ensure(selection)
+      this.assertOpen()
       const worker = this.worker
       if (worker === undefined) throw new DecisionError('backend_unavailable', 'the local model process is not running')
       const flat = groups.flat()
       const results: ModelResult[] = []
       for (const request of mergeRequests(flat, loaded.limits?.max_request_items)) {
         const answered = await worker.judge(request)
+        this.assertOpen()
         if (!Array.isArray(answered) || answered.length !== request.length) throw new DecisionError('model_failed', 'the local model did not answer every call')
         results.push(...answered.map(checkResult))
       }
@@ -148,9 +188,11 @@ export class LocalEngine {
   }
 
   private async ensure(selection: LocalSelection): Promise<LoadResult> {
+    this.assertOpen()
     const key = `${selection.pack}\n${selection.model}`
     if (this.current?.key === key && this.worker?.running === true) return await this.current.loading
-    this.stop()
+    await this.stop()
+    this.assertOpen()
     const pack = installedPack(this.home, selection.pack)
     if (pack === undefined) throw new DecisionError('not_installed', `the runtime pack ${selection.pack} is not installed`)
     const model = readModel(this.home, selection.model)
@@ -169,7 +211,7 @@ export class LocalEngine {
       current.loaded = await current.loading
       return current.loaded
     } catch (error) {
-      if (this.current === current) this.stop()
+      if (this.current === current) await this.stop()
       throw error
     }
   }
@@ -178,8 +220,8 @@ export class LocalEngine {
    *  仅在进程仍存活且没有判定或加载操作时安排空闲清理。 */
   private armIdle(): void {
     clearTimeout(this.idleTimer)
-    if (this.worker?.running !== true) return
-    this.idleTimer = setTimeout(() => this.stop(), this.idleMs)
+    if (this.closed || this.worker?.running !== true) return
+    this.idleTimer = setTimeout(() => { void this.stop() }, this.idleMs)
     this.idleTimer.unref()
   }
 }

@@ -619,7 +619,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       } finally {
         lifecycle.abort(new Error('vulcan-decision-guard integration disposed'))
         panel.close()
-        engine.stop()
+        await engine.close()
       }
     }
   }, 'vulcan-decision-guard lifecycle')

@@ -234,7 +234,7 @@ async function runJudge(home: DecisionHome, args: readonly string[]): Promise<nu
     console.log(JSON.stringify(verdict, null, 2))
     return 0
   } finally {
-    engine.stop()
+    await engine.close()
   }
 }
 
@@ -254,7 +254,7 @@ async function runEval(home: DecisionHome, args: readonly string[]): Promise<num
     console.log(JSON.stringify({ loaded, load_ms: Math.round(loadedAt - started), judge_ms: Math.round(performance.now() - loadedAt), results }, null, 2))
     return 0
   } finally {
-    engine.stop()
+    await engine.close()
   }
 }
 

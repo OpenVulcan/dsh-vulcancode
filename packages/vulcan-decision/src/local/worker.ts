@@ -92,7 +92,9 @@ export class WorkerProcess {
     this.child = undefined
     this.failAll(new DecisionError('backend_unavailable', 'the local model process was stopped'))
     if (child === undefined || child.exitCode !== null || child.signalCode !== null) return Promise.resolve()
-    const exited = new Promise<void>(resolve => child.once('exit', () => resolve()))
+    // Failed spawns emit close without exit. Wait for either kind of child to release its resources.
+    // 启动失败的子进程只发出 close 事件。两种情况下都要等子进程释放资源。
+    const exited = new Promise<void>(resolve => child.once('close', () => resolve()))
     child.kill()
     return exited
   }
