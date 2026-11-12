@@ -11,7 +11,7 @@ Long-term memory is three Markdown files of heading nodes: `user` (who the user 
 
 1. Run `memory_outline` for all scopes. Note the budget lines from the last write receipt if you have one.
 2. Read candidate nodes with `memory_search` (by `ids`, or by patterns for suspected duplicates) before changing anything. Every change needs the node's current `expectedRevision`.
-3. Plan the changes, then apply them with as few `memory_write` calls as practical; one call applies up to 16 operations all-or-nothing.
+3. Batch independent changes in `memory_write`. One call applies up to 16 operations in order and commits all-or-nothing. For dependent edits to the same node, use separate calls and read its revision after each successful write.
 4. Report what changed: merged, moved, renamed, deleted, and anything you left for the user to decide.
 
 ## What to fix

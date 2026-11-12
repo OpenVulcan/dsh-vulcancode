@@ -72,7 +72,64 @@ test('a stale revision rolls back the whole call', () => {
   ]))
   assert.equal(error.kind, 'revision_mismatch')
   assert.ok(error.message.startsWith('Operation #2 (counting from 1)'))
+  assert.ok(error.message.includes(`current ${first.operations[0]!.revision}`))
   assert.equal(readFileSync(file, 'utf8'), before)
+})
+
+// A rejected rename and replace must report the revision readers will see afterward.
+// 改名和替换的批次被拒绝时，报错须说明读者随后会看到的修订。
+test('rename then replace reports staged and committed revisions without writing', () => {
+  const { store, context } = setup()
+  const { id, revision } = write(store, context, [
+    { action: 'create', scope: 'space', section: 'conventions', title: 'Old title', body: 'Old body' },
+  ]).operations[0]!
+  const file = store.scopePath('space', undefined)
+  const before = readFileSync(file, 'utf8')
+  const rename = { action: 'rename', id, expectedRevision: revision, title: 'New title' }
+  const replace = { action: 'replace', id, expectedRevision: revision, body: 'New body' }
+
+  const error = caught(() => write(store, context, [rename, replace]))
+  assert.equal(error.kind, 'revision_mismatch')
+  assert.match(error.message, /^Operation #2 \(counting from 1\) failed, so no change was written:/)
+  assert.equal(readFileSync(file, 'utf8'), before)
+  const persisted = store.loadScopes(context).space.views('space').find(node => node.id === id)
+  assert.equal(persisted?.revision, revision)
+
+  const staged = /has staged revision ([0-9a-f]{8}) in this batch/.exec(error.message)?.[1]
+  assert.ok(staged, error.message)
+  assert.notEqual(staged, revision)
+  assert.ok(error.message.includes(`Committed revision before the batch: ${persisted.revision}.`))
+  assert.ok(error.message.includes('Submit dependent edits in separate calls'))
+
+  // Supplying the right intermediate token still lets the batch commit in order.
+  // 提供正确的中间令牌时，批次仍能按顺序提交。
+  const committed = write(store, context, [rename, { ...replace, expectedRevision: staged }])
+  assert.equal(committed.operations[0]?.revision, staged)
+  const finalNode = store.loadScopes(context).space.views('space').find(node => node.id === id)
+  assert.equal(finalNode?.path.at(-1), 'New title')
+  assert.equal(finalNode?.body, 'New body')
+  assert.equal(finalNode?.revision, committed.operations[1]?.revision)
+})
+
+// A staged move can leave the original revision in a different scope.
+// 批内移动后，原修订可能留在不同的层。
+test('a staged move finds the committed revision in its original scope', () => {
+  const { store, context } = setup()
+  const { id, revision } = write(store, context, [
+    { action: 'create', scope: 'space', section: 'conventions', title: 'Before move', body: 'Text' },
+  ]).operations[0]!
+  const file = store.scopePath('space', undefined)
+  const before = readFileSync(file, 'utf8')
+  const error = caught(() => write(store, context, [
+    { action: 'move', id, expectedRevision: revision, scope: 'project', section: 'pitfalls' },
+    { action: 'rename', id, expectedRevision: revision, title: 'After move' },
+    { action: 'replace', id, expectedRevision: revision, body: 'New text' },
+  ]))
+
+  assert.match(error.message, /^Operation #3 .* has staged revision [0-9a-f]{8} in this batch/)
+  assert.ok(error.message.includes(`Committed revision before the batch: ${revision}.`))
+  assert.equal(readFileSync(file, 'utf8'), before)
+  assert.equal(store.registry().projectForHost('host-1'), undefined)
 })
 
 test('edits keep identity and change revision', () => {

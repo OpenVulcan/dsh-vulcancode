@@ -14,6 +14,7 @@ Where it belongs:
 
 How to write:
 - Search first. Update or append to an existing node instead of adding a near duplicate, and merge duplicates that a receipt reports.
+- Batch operations run in order and commit all-or-nothing. For dependent edits to the same node, use separate calls and read its revision after each successful write.
 - Make each title state the fact itself ("Verify with targeted tests only"), not a topic ("Testing"), so catalog lines carry meaning.
 - One fact per node; keep bodies short and put details in child nodes (down to H4).
 - Correct or delete nodes that turn out to be wrong or outdated.

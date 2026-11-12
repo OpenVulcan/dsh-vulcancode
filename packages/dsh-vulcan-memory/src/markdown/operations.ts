@@ -239,12 +239,29 @@ class WriteSession {
     return scopes.flatMap(scope => this.scope(scope).document.views(scope))
   }
 
-  /** Find a node by id across scopes and check its revision. */
+  /**
+   * Find the staged node by id and compare its revision with the caller's token.
+   * 按标识查找批内暂存节点，并将其修订与调用方的令牌比较。
+   */
   private locate(id: string, expectedRevision: string): NodeView {
     const view = this.allViews().find(candidate => candidate.id === id)
     if (view === undefined) throw MemoryError.notFound(id)
-    if (view.revision !== expectedRevision.trim()) throw MemoryError.revisionMismatch(id, expectedRevision, view.revision)
-    return view
+    if (view.revision === expectedRevision.trim()) return view
+
+    // A rejected batch discards its staged documents. Search the original files in scope order,
+    // since a staged move can put the node in a different scope from its committed version.
+    // 被拒绝的批次会丢弃暂存文档。按层顺序查找原始文件，因为批内移动可能改变节点所在的层。
+    let committed: string | undefined
+    for (const scope of SCOPES) {
+      const original = this.scopes.get(scope)?.original
+      if (original === undefined) continue
+      const node = MemoryDocument.parse(original).views(scope).find(candidate => candidate.id === id)
+      if (node === undefined) continue
+      committed = node.revision
+      break
+    }
+    if (committed === view.revision) throw MemoryError.revisionMismatch(id, expectedRevision, view.revision)
+    throw MemoryError.stagedRevisionMismatch(id, expectedRevision, view.revision, committed)
   }
 
   apply(operation: WriteOperation): WriteOperationReceipt {
