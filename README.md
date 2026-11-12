@@ -43,7 +43,7 @@ dsh 通过套件的 `cordis.patch.yml` 装载八个插件。自动审批和语�
 
 #### `@openvulcan/dsh-vulcancode`
 
-负责声明 dsh 兼容范围和插件组。安装入口是 `dsh plugin add @openvulcan/dsh-vulcancode`，插件管理页可查看套件。源码在 [packages/dsh-vulcancode](packages/dsh-vulcancode)。
+套件通过 `dsh.bundle.patch` 声明插件组。dsh 加载各子插件的 `apply(ctx)` 入口，账号插件则导出 Cordis 服务类。安装后可在插件管理页查看套件及其组件。源码在 [packages/dsh-vulcancode](packages/dsh-vulcancode)。
 
 ### dsh 插件
 
@@ -93,8 +93,18 @@ dsh 通过套件的 `cordis.patch.yml` 装载八个插件。自动审批和语�
 
 套件声明兼容 dsh `>=0.2.1-rc.2 <0.3.0`。
 
+### 桌面版
+
+在 dsh 侧栏打开「插件」，点击「添加插件」，在安装框中粘贴以下 npm 包名并安装。
+
+```text
+@openvulcan/dsh-vulcancode
+```
+
+### 网页版
+
 ```sh
-dsh plugin add @openvulcan/dsh-vulcancode
+dsh plugin --profile web add @openvulcan/dsh-vulcancode
 ```
 
 ### 使用
@@ -121,7 +131,7 @@ pnpm run test
 pnpm run pack:dsh   # 生成 dist/openvulcan-dsh-vulcancode-<版本>.tgz
 ```
 
-本地安装打包结果使用 `dsh plugin add ./dist/openvulcan-dsh-vulcancode-<版本>.tgz`。
+在网页版配置中安装本地包时，执行 `dsh plugin --profile web add ./dist/openvulcan-dsh-vulcancode-<版本>.tgz`。
 
 ## 致谢
 

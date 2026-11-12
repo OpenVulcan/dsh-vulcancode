@@ -43,7 +43,7 @@ dsh loads eight plugins through the suite's `cordis.patch.yml`. Auto approval an
 
 #### `@openvulcan/dsh-vulcancode`
 
-Declares the supported dsh versions and the plugin group. Install it with `dsh plugin add @openvulcan/dsh-vulcancode` and find the suite on the Plugins page. See [packages/dsh-vulcancode](packages/dsh-vulcancode).
+The suite declares its plugin group through `dsh.bundle.patch`. dsh loads the components through their `apply(ctx)` entry points or, for the account plugin, through its Cordis service class. After installation, the Plugins page lists the suite and its components. See [packages/dsh-vulcancode](packages/dsh-vulcancode).
 
 ### dsh plugins
 
@@ -93,8 +93,18 @@ Handles device authorization, credential refresh, account profiles, and device s
 
 The suite declares support for dsh `>=0.2.1-rc.2 <0.3.0`.
 
+### Desktop
+
+Open **Plugins** from the dsh sidebar, click **Add plugin**, and paste the following npm package name into the installation dialog.
+
+```text
+@openvulcan/dsh-vulcancode
+```
+
+### Web
+
 ```sh
-dsh plugin add @openvulcan/dsh-vulcancode
+dsh plugin --profile web add @openvulcan/dsh-vulcancode
 ```
 
 ### Usage
@@ -121,7 +131,7 @@ pnpm run test
 pnpm run pack:dsh   # writes dist/openvulcan-dsh-vulcancode-<version>.tgz
 ```
 
-Install the packed suite locally with `dsh plugin add ./dist/openvulcan-dsh-vulcancode-<version>.tgz`.
+Install a local tarball in the Web profile with `dsh plugin --profile web add ./dist/openvulcan-dsh-vulcancode-<version>.tgz`.
 
 ## Thanks
 

@@ -1,7 +1,9 @@
 {
-  "name": "dsh-vulcancode-workspace",
+  "name": "@openvulcan/dsh-vulcancode",
+  "version": "0.4.3",
   "private": true,
   "type": "module",
+  "dsh": { "bundle": { "patch": "./packages/dsh-vulcancode/cordis.patch.yml" } },
   "packageManager": "pnpm@11.15.1",
   "scripts": {
     "build": "pnpm -r run build",

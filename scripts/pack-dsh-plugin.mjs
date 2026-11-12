@@ -74,6 +74,12 @@ function reach(name, found = new Set()) {
 const suiteName = `@openvulcan/${SUITE}`
 const suite = workspace.get(suiteName)
 if (suite === undefined) throw new Error(`no ${suiteName} in packages/`)
+// The catalog reads the repository manifest, while npm installs the suite manifest.
+// 收录站读取仓库根清单，npm 安装时读取套件清单。
+const repositoryManifest = readJson(path.join(ROOT, 'package.json'))
+if (repositoryManifest.name !== suite.manifest.name || repositoryManifest.version !== suite.manifest.version) {
+  throw new Error(`root package.json must match ${suite.manifest.name}@${suite.manifest.version}`)
+}
 const bundled = [...reach(suiteName)].sort()
 for (const name of bundled) {
   const version = workspace.get(name).manifest.version
