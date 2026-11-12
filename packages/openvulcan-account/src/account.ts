@@ -150,8 +150,25 @@ export interface AccountSource {
   credential(): Promise<Credential>
 }
 
+// Identify the credential whose server-side rotation this account currently owns.
+// 标识当前账号实例正在进行服务端轮换的凭据。
+interface ActiveRefresh {
+  readonly credential: Credential
+  readonly result: Promise<Credential>
+}
+
+/** Compare credential identities across reads while allowing the rotation marker to change.
+ *  比较多次读取的凭据身份，允许轮换标记变化。 */
+function sameCredential(left: Credential, right: Credential): boolean {
+  return left.site === right.site && left.auth_origin === right.auth_origin
+    && left.authorization_id === right.authorization_id && left.access_token === right.access_token
+    && left.expires_at === right.expires_at
+}
+
 export class OpenVulcanAccount implements AccountSource {
-  private refreshing: Promise<Credential> | undefined
+  // Track live work separately from the durable crash-recovery marker.
+  // 将正在进行的刷新与持久化的崩溃恢复标记分开记录。
+  private refreshing: ActiveRefresh | undefined
 
   constructor(
     private readonly store: CredentialStore,
@@ -163,12 +180,13 @@ export class OpenVulcanAccount implements AccountSource {
   async status(): Promise<AccountStatus> {
     const credential = await this.store.read()
     if (credential === undefined) return { signedIn: false }
+    const interrupted = credential.rotation_pending === true && this.refreshFor(credential) === undefined
     return {
-      signedIn: credential.rotation_pending !== true && Date.parse(credential.expires_at) > Date.now(),
+      signedIn: !interrupted && (this.refreshFor(credential) !== undefined || Date.parse(credential.expires_at) > Date.now()),
       site: credential.site,
       authorizationId: credential.authorization_id,
       expiresAt: credential.expires_at,
-      ...credential.rotation_pending === true ? { reauthRequired: true } : {},
+      ...interrupted ? { reauthRequired: true } : {},
     }
   }
 
@@ -287,14 +305,23 @@ export class OpenVulcanAccount implements AccountSource {
   async credential(): Promise<Credential> {
     const credential = await this.store.read()
     if (credential === undefined) throw new AccountError('not signed in to OpenVulcan')
+    const active = this.refreshFor(credential)
+    if (active !== undefined) return await active.result
     if (credential.rotation_pending === true) throw new AccountError('a credential rotation was interrupted; sign in to OpenVulcan again')
     const remaining = Date.parse(credential.expires_at) - Date.now()
     if (remaining <= 0) throw new AccountError('the OpenVulcan sign-in expired; sign in again')
     if (remaining > REFRESH_AHEAD_MS) return credential
-    this.refreshing ??= this.refresh(credential).finally(() => {
-      this.refreshing = undefined
+    const result = Promise.resolve().then(() => this.refresh(credential)).finally(() => {
+      if (this.refreshing?.result === result) this.refreshing = undefined
     })
-    return await this.refreshing
+    this.refreshing = { credential, result }
+    return await result
+  }
+
+  /** Return the live rotation only if it belongs to the credential just read.
+   *  仅当正在进行的轮换属于刚读取的凭据时返回该任务。 */
+  private refreshFor(credential: Credential): ActiveRefresh | undefined {
+    return this.refreshing !== undefined && sameCredential(this.refreshing.credential, credential) ? this.refreshing : undefined
   }
 
   private async refresh(credential: Credential): Promise<Credential> {
