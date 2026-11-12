@@ -38,6 +38,7 @@ import { loadSettings } from './settings.js'
 import { StructuredMemory } from './sqlite/service.js'
 import { consentSchema, mutationSchema } from './sqlite/store.js'
 import { foldSqliteRecall, recallStateSchema, SQLITE_RECALL_PROJECTION, updateSqliteRecall, type RecallState } from './sqlite/recall.js'
+import { watchSqliteTools } from './sqlite/tool-lifecycle.js'
 
 // Define SQLite-specific tool and page request contracts.
 // 定义 SQLite 专用的工具和页面请求协议。
@@ -80,10 +81,6 @@ export async function apply(ctx: Context): Promise<void> {
   let account: AccountSource | undefined
   const structured = new StructuredMemory(path.join(memoryDirectory, 'sqlite'),
     () => loadSettings(memoryDirectory).mode === 'sqlite', () => account)
-  /** Advertise structured tools only when SQLite is active for a main agent.
-   *  仅为启用 SQLite 的主智能体公布结构化工具。 */
-  const sqliteEnabled = ({ agent }: { agent: Agent }): boolean =>
-    !isSubagent(agent.session.header) && loadSettings(memoryDirectory).mode === 'sqlite'
   ctx.effect(() => () => { structured.dispose() })
   ctx.inject(['openvulcanAccount'], child => {
     child.effect(() => {
@@ -92,7 +89,9 @@ export async function apply(ctx: Context): Promise<void> {
     })
   })
 
-  ctx.effect(() => ctx.tools.register({
+  // Registration is tied to the configured mode because dsh 0.2.1 ignores tool activation options.
+  // 注册跟随配置模式，因为 dsh 0.2.1 会忽略工具启用选项。
+  const sqliteTools: ToolDefinition[] = [{
     name: SQL_SEARCH,
     description: 'In SQLite memory mode, find relevant long-term memories with local keyword search.',
     parameters: z.toJSONSchema(searchInput),
@@ -103,8 +102,7 @@ export async function apply(ctx: Context): Promise<void> {
       // 仅允许已认证页面发出的显式语义检索操作向 OpenVulcan 提交文本。
       return { content: JSON.stringify(await structured.search(sqlProject(agent), query, false)) }
     },
-  }, { when: sqliteEnabled }))
-  ctx.effect(() => ctx.tools.register({
+  }, {
     name: SQL_WRITE,
     description: 'In SQLite memory mode, add, edit, or remove a durable memory or profile. Edit and remove require the current record id and revision. Store only relevant, non-secret facts.',
     parameters: z.toJSONSchema(writeInput),
@@ -114,7 +112,20 @@ export async function apply(ctx: Context): Promise<void> {
       const { operation } = validated(writeInput, args)
       return { content: JSON.stringify((await structured.local()).write(project, operation)) }
     },
-  }, { when: sqliteEnabled }))
+  }]
+  const sqliteToolLifecycle = watchSqliteTools(memoryDirectory, () => {
+    const disposers: (() => void)[] = []
+    try {
+      for (const definition of sqliteTools) disposers.push(ctx.tools.register(definition, {
+        when: ({ agent }) => !isSubagent(agent.session.header),
+      }))
+      return () => { for (const dispose of disposers) dispose() }
+    } catch (error) {
+      for (const dispose of disposers) dispose()
+      throw error
+    }
+  }, error => ctx.logger.warn(`cannot activate SQLite memory tools: ${error instanceof Error ? error.message : String(error)}`))
+  ctx.effect(() => sqliteToolLifecycle.dispose)
 
   /** Memory of an agent's project, or `undefined` when memory is not active for it. */
   const access = (agent: Agent): markdown.MarkdownMemoryAccess | undefined =>
@@ -292,6 +303,7 @@ export async function apply(ctx: Context): Promise<void> {
       ['POST', 'settings', async (request) => {
         const settings = page.parseSettingsSave(await readJson(request))
         page.saveSettings(memoryDirectory, settings)
+        sqliteToolLifecycle.refresh()
         return page.settingsView(settings)
       }],
       ['POST', 'export', async request => page.exportRequest(store, await readJson(request))],
