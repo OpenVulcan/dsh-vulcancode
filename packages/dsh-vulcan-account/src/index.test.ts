@@ -3,20 +3,27 @@ import { test } from 'node:test'
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { CredentialRecord } from '@deepseek-ai/dsh-credentials'
-import { AccountError, type Credential } from '@openvulcan/openvulcan-account'
+import { AccountError, OpenVulcanAccount, type Credential } from '@openvulcan/openvulcan-account'
 
 import { CREDENTIAL_KEY, deviceInfo, DshCredentialStore, handle, ROUTES, type AccountView, type OpenVulcanAccountService } from './index.js'
 
 /** dsh's credential service, reduced to one in-memory record per key. */
 class Records {
   readonly values = new Map<string, CredentialRecord>()
+  // Serialize mutation callbacks like the DSH document lock.
+  // 像 DSH 文档锁一样串行执行修改回调。
+  private queue = Promise.resolve()
   async readRecord(key: string) { return this.values.get(key) }
   async modifyRecord(key: string, mutate: (current: CredentialRecord | undefined) => Promise<CredentialRecord | undefined>) {
-    const next = await mutate(this.values.get(key))
-    if (next !== undefined) this.values.set(key, next)
-    return next ?? this.values.get(key)
+    const operation = this.queue.then(async () => {
+      const next = await mutate(this.values.get(key))
+      if (next !== undefined) this.values.set(key, next)
+      return next ?? this.values.get(key)
+    })
+    this.queue = operation.then(() => {}, () => {})
+    return operation
   }
-  async deleteRecord(key: string) { this.values.delete(key) }
+  async deleteRecord(key: string) { await this.queue; this.values.delete(key) }
 }
 
 const CREDENTIAL: Credential = {
@@ -43,9 +50,70 @@ test('keeps the credential as one grant record under the shared key', async () =
   assert.equal(await store.replace(CREDENTIAL, pending), true)
   assert.equal(await store.replace(CREDENTIAL, { ...CREDENTIAL, access_token: 'b'.repeat(43) }), false)
   assert.deepEqual(await store.read(), pending)
-  await store.delete()
+  assert.equal(await store.take(CREDENTIAL), undefined)
+  assert.deepEqual(await store.take(pending), pending)
+  assert.deepEqual(records.values.get(CREDENTIAL_KEY), { kind: 'grant', payload: null })
   assert.equal(await store.replace(pending, CREDENTIAL), false)
   assert.equal(await store.read(), undefined)
+  await store.write(CREDENTIAL)
+  assert.deepEqual(await store.read(), CREDENTIAL)
+})
+
+test('two DSH instances revoke the rotated token in either commit order', async context => {
+  for (const rotationFirst of [true, false]) {
+    await context.test(rotationFirst ? 'refresh publishes first' : 'sign-out clears first', async t => {
+      const records = new Records()
+      const rotating = new DshCredentialStore({ credentials: records } as unknown as Context)
+      const exiting = new DshCredentialStore({ credentials: records } as unknown as Context)
+      const current = { ...CREDENTIAL, expires_at: new Date(Date.now() + 3_600_000).toISOString() }
+      const renewed = { ...CREDENTIAL, access_token: 'b'.repeat(43) }
+      await rotating.write(current)
+      const requestStarted = Promise.withResolvers<void>()
+      const reply = Promise.withResolvers<Response>()
+      const clearStarted = Promise.withResolvers<void>()
+      const allowClear = Promise.withResolvers<void>()
+      const take = exiting.take.bind(exiting)
+      const storeRead = exiting.read.bind(exiting)
+      const pauseClear = async () => { clearStarted.resolve(); await allowClear.promise }
+      // Expose the former read/delete gap without changing the order of atomic mutations.
+      // 暴露原先读取与删除之间的窗口，同时保留原子修改的顺序。
+      t.mock.method(exiting, 'read', async () => {
+        const saved = await storeRead()
+        await pauseClear()
+        return saved
+      })
+      t.mock.method(exiting, 'take', async () => { await pauseClear(); return take() })
+      const revoked: (string | null)[] = []
+      t.mock.method(globalThis, 'fetch', async (url: string, request: RequestInit) => {
+        if (url.endsWith('/token/refresh')) {
+          requestStarted.resolve()
+          return reply.promise
+        }
+        assert.match(url, /\/logout$/)
+        const authorization = new Headers(request.headers).get('Authorization')
+        revoked.push(authorization)
+        return new Response(null, { status: authorization === `Auth ${renewed.access_token}` ? 204 : 401 })
+      })
+      const refresh = new OpenVulcanAccount(rotating, deviceInfo('test')).credential()
+      await requestStarted.promise
+      const logout = new OpenVulcanAccount(exiting, deviceInfo('test')).signOut()
+      await clearStarted.promise
+      if (rotationFirst) {
+        reply.resolve(Response.json({ ...renewed, token_type: 'Auth' }))
+        assert.deepEqual(await refresh, renewed)
+        allowClear.resolve()
+        await logout
+      } else {
+        allowClear.resolve()
+        await logout
+        reply.resolve(Response.json({ ...renewed, token_type: 'Auth' }))
+        await assert.rejects(refresh, /changed during refresh/)
+      }
+      assert.equal(await rotating.read(), undefined)
+      assert.deepEqual(revoked, rotationFirst
+        ? [`Auth ${renewed.access_token}`] : [`Auth ${current.access_token}`, `Auth ${renewed.access_token}`])
+    })
+  }
 })
 
 test('routes check the site and report failures with their code', async () => {

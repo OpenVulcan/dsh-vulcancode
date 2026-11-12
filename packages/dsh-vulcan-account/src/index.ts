@@ -74,6 +74,22 @@ export class DshCredentialStore implements CredentialStore {
     return replaced
   }
 
+  /** Clear and return one exact credential inside the DSH document lock.
+   *  在 DSH 凭据文档锁内清除并返回实际移除的凭据。 */
+  async take(expected?: Credential): Promise<Credential | undefined> {
+    let removed: Credential | undefined
+    await this.ctx.credentials.modifyRecord(CREDENTIAL_KEY, async record => {
+      if (record?.kind !== 'grant') return undefined
+      const current = parseCredential(record.payload)
+      if (current === undefined || (expected !== undefined && !matchesStoredCredential(current, expected))) return undefined
+      removed = current
+      // The DSH callback can replace a record but cannot delete it. A null grant carries no credential.
+      // DSH 回调支持替换记录但无法删除记录。空授权记录不包含任何凭据。
+      return { kind: 'grant', payload: null }
+    })
+    return removed
+  }
+
   async delete(): Promise<void> {
     await this.ctx.credentials.deleteRecord(CREDENTIAL_KEY)
   }
