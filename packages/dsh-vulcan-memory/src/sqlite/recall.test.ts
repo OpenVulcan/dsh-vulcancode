@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
-import { foldSqliteRecall, SQLITE_RECALL_SOURCE, updateSqliteRecall, type RecallState } from './recall.js'
+import { filterSqliteRecallForCompaction, foldSqliteRecall, SQLITE_RECALL_SOURCE, updateSqliteRecall, type RecallState } from './recall.js'
 
 test('SQLite recall replaces preview duplicates, preserves conversation, and clears on disable', () => {
   // Replay real session events so replacement semantics match the model-visible surface.
@@ -25,5 +25,9 @@ test('SQLite recall replaces preview duplicates, preserves conversation, and cle
   updateSqliteRecall(session, state(), 3, 1, '')
   assert.deepEqual(session.deriveMessages(), [user])
   updateSqliteRecall(session, state(), 4, 1, 'restored profile')
+  assert.equal(session.deriveMessages().length, 2)
+  const compact = { provider: 'test', model: 'test', purpose: 'compaction' as const, messages: session.deriveMessages() }
+  filterSqliteRecallForCompaction(compact)
+  assert.deepEqual(compact.messages, [user])
   assert.equal(session.deriveMessages().length, 2)
 })

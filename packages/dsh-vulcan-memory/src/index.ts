@@ -37,7 +37,7 @@ import { projectContext } from './project.js'
 import { loadSettings } from './settings.js'
 import { StructuredMemory } from './sqlite/service.js'
 import { consentSchema, mutationSchema } from './sqlite/store.js'
-import { foldSqliteRecall, recallStateSchema, SQLITE_RECALL_PROJECTION, updateSqliteRecall, type RecallState } from './sqlite/recall.js'
+import { filterSqliteRecallForCompaction, foldSqliteRecall, recallStateSchema, SQLITE_RECALL_PROJECTION, updateSqliteRecall, type RecallState } from './sqlite/recall.js'
 import { watchSqliteTools } from './sqlite/tool-lifecycle.js'
 
 // Define SQLite-specific tool and page request contracts.
@@ -231,6 +231,10 @@ export async function apply(ctx: Context): Promise<void> {
         source: { kind: SOURCE_KIND, form: 'snapshot', sections: [{ name: SOURCE_KIND, text }] },
       }), ...decision.messages],
     }
+  }, { prepend: true })
+  ctx.on('llm/stream', (request, next) => {
+    filterSqliteRecallForCompaction(request)
+    return next()
   }, { prepend: true })
 
   ctx.skills.registerProvider(() => {

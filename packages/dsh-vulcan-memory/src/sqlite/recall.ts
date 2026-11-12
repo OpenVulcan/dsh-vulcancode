@@ -1,5 +1,5 @@
 import { createDeveloperMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { UserMessage } from '@deepseek-ai/dsh-llm'
+import type { GenerateOptions, UserMessage } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import { z } from 'zod'
 
@@ -39,6 +39,16 @@ export function foldSqliteRecall(state: RecallState, event: SessionEvent): Recal
   return [...state.filter(slot => slot.seq !== replaced), { seq: event.seq, text }]
 }
 
+/** Remove refreshable memory from an auxiliary compaction request before it becomes summary text.
+ *  在可刷新的记忆被写入摘要前，从辅助压缩请求中移除它。 */
+export function filterSqliteRecallForCompaction(request: GenerateOptions<string>): void {
+  // The DSH compactor constructs a mutable auxiliary request. Ordinary conversation requests
+  // retain their frozen message list and the current recall.
+  // DSH 压缩器构造可变的辅助请求。普通对话请求保留冻结的消息列表和当前召回。
+  if (request.purpose !== 'compaction') return
+  request.messages = request.messages.filter(message => !('source' in message) || message.source.kind !== SQLITE_RECALL_SOURCE)
+}
+
 /** Keep one current recall on the session surface. Return a message for normal admission only
  *  when the session has never had a recall slot. Empty text clears the previous recall.
  *  在会话可见上下文中保留一份当前召回。会话尚无召回位置时返回一条由主机正常接纳的消息，
@@ -47,7 +57,7 @@ export function updateSqliteRecall(session: Session, state: RecallState, turn: n
   // Use current surface membership because compaction may already have shadowed a recall.
   // 以当前可见节点为准，因为上下文压缩可能已隐藏某次召回。
   const known = new Map(state.map(slot => [slot.seq, slot.text]))
-  const slots = session.surface.nodes.filter(seq => known.has(seq))
+  const slots = known.size === 0 ? [] : session.surface.nodes.filter(seq => known.has(seq))
   const slot = slots.at(-1)
   const source = { kind: SQLITE_RECALL_SOURCE, form: 'recall' } as const
   if (slot === undefined) return text === '' ? undefined : createUserMessage({ source, content: [{ type: 'text', text }] })
