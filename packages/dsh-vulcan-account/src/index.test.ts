@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import type { Context } from '@deepseek-ai/cordis'
+import { Context } from '@deepseek-ai/cordis'
 import type { CredentialRecord } from '@deepseek-ai/dsh-credentials'
 import { AccountError, OpenVulcanAccount, type Credential } from '@openvulcan/openvulcan-account'
 
-import { CREDENTIAL_KEY, deviceInfo, DshCredentialStore, handle, ROUTES, type AccountView, type OpenVulcanAccountService } from './index.js'
+import { CREDENTIAL_KEY, deviceInfo, DshCredentialStore, handle, OpenVulcanAccountService, ROUTES, type AccountView } from './index.js'
 
 /** dsh's credential service, reduced to one in-memory record per key. */
 class Records {
@@ -163,6 +163,42 @@ test('the rotated token is revoked even if its DSH provider is disposed before i
   await assert.rejects(rotation, /provider was disposed/)
   assert.equal(await exiting.read(), undefined)
   assert.deepEqual(revoked, [`Auth ${current.access_token}`, `Auth ${renewed.access_token}`])
+})
+
+test('a slow authorization response cannot replace the current DSH sign-in request', async t => {
+  const service = new OpenVulcanAccountService(new Context())
+  t.after(() => { service.cancelSignIn() })
+  const firstRequested = Promise.withResolvers<void>()
+  const secondRequested = Promise.withResolvers<void>()
+  const firstReply = Promise.withResolvers<void>()
+  const secondReply = Promise.withResolvers<void>()
+  let requests = 0
+  t.mock.method(globalThis, 'fetch', async (url: string, request: RequestInit) => {
+    const index = requests++
+    const { state } = JSON.parse(String(request.body)) as { state: string }
+    assert.match(url, /\/authorize$/)
+    if (index === 0) { firstRequested.resolve(); await firstReply.promise }
+    else { secondRequested.resolve(); await secondReply.promise }
+    const approval = new URL('/authorize', url)
+    approval.searchParams.set('request_id', String(index))
+    approval.searchParams.set('state', state)
+    return Response.json({ approval_url: approval.href, expires_at: new Date(Date.now() + 30_000).toISOString() })
+  })
+  const first = service.signIn('cn')
+  await firstRequested.promise
+  const second = service.signIn('global')
+  await secondRequested.promise
+  secondReply.resolve()
+  const current = await second
+  t.after(() => { current.cancel() })
+  firstReply.resolve()
+  const stale = await first.then(pending => {
+    pending.cancel()
+    return null
+  }, (error: unknown) => error)
+  assert.ok(stale instanceof AccountError)
+  service.cancelSignIn()
+  await assert.rejects(current.done, AccountError)
 })
 
 test('names the sign-in client dsh at its exact version', () => {

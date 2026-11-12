@@ -105,6 +105,9 @@ export class OpenVulcanAccountService extends Service implements AccountSource {
 
   private readonly account: OpenVulcanAccount
   private readonly listeners = new Set<(status: AccountStatus) => void>()
+  // Invalidate requests that are still waiting for an approval URL.
+  // 使仍在等待授权链接的旧登录请求失效。
+  private signInGeneration = 0
   private pending: PendingSignIn | undefined
   private pendingError: string | undefined
   /** The profile of one device authorization, read once per sign-in. */
@@ -127,8 +130,7 @@ export class OpenVulcanAccountService extends Service implements AccountSource {
       }
     })
     ctx.effect(() => () => {
-      this.pending?.cancel()
-      this.pending = undefined
+      this.cancelSignIn()
       this.listeners.clear()
     }, 'openvulcan-account: pending sign-in')
   }
@@ -152,10 +154,15 @@ export class OpenVulcanAccountService extends Service implements AccountSource {
    */
   async signIn(site: Site): Promise<PendingSignIn> {
     this.cancelSignIn()
+    const generation = this.signInGeneration
     const pending = await this.account.signIn(site)
+    if (generation !== this.signInGeneration) {
+      pending.cancel()
+      throw new AccountError('the sign-in was superseded or cancelled')
+    }
     this.pending = pending
     pending.done.then(async (status) => {
-      this.notify(status)
+      if (this.pending === pending) this.notify(status)
     }, (error: unknown) => {
       if (this.pending === pending) this.pendingError = messageOf(error)
     }).finally(() => {
@@ -165,6 +172,7 @@ export class OpenVulcanAccountService extends Service implements AccountSource {
   }
 
   cancelSignIn(): void {
+    this.signInGeneration++
     this.pending?.cancel()
     this.pending = undefined
     this.pendingError = undefined
