@@ -15,6 +15,7 @@ npm-debug.log*
 *.onnx.data
 
 # Local environment
+/.vulcan/
 .env
 .env.*
 .DS_Store
