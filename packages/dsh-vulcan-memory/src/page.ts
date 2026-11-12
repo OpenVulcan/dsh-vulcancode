@@ -300,9 +300,12 @@ export function previewRequest(store: MarkdownMemoryStore, value: unknown): Impo
   return previewImport(store, archiveBytes(input), text(input, 'name'), parseMappings(input['projects']))
 }
 
+/** Apply the archive, mappings and resolutions against the revision confirmed by the browser.
+ *  按浏览器确认的修订值应用导入包、项目映射和冲突解决选项。 */
 export function importRequest(store: MarkdownMemoryStore, value: unknown): ImportReport {
-  const input = fields(value, ['archive', 'name', 'expectedSha256', 'projects', 'resolutions'])
-  return applyImport(store, archiveBytes(input), text(input, 'name'), text(input, 'expectedSha256'), parseMappings(input['projects']), parseResolutions(input['resolutions']))
+  const input = fields(value, ['archive', 'name', 'expectedSha256', 'expectedLocalRevision', 'projects', 'resolutions'])
+  return applyImport(store, archiveBytes(input), text(input, 'name'), text(input, 'expectedSha256'),
+    text(input, 'expectedLocalRevision'), parseMappings(input['projects']), parseResolutions(input['resolutions']))
 }
 
 export { saveSettings }

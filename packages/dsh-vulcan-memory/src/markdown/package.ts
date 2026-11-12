@@ -15,7 +15,7 @@ import { unzipSync, zipSync } from 'fflate'
 import { EXPORT_FORMAT_VERSION, MAX_FILE_BYTES, MAX_NODE_LEVEL, MAX_PACKAGE_BYTES, MAX_PACKAGE_PROJECTS, byteLength } from './constants.js'
 import { MemoryDocument, storedBody, viewTitle, type NodeView } from './document.js'
 import { MemoryError } from './errors.js'
-import { REGISTRY_FILE, compare, directoryName, isRecord, randomHex, type MemoryRegistry } from './registry.js'
+import { MemoryRegistry, REGISTRY_FILE, compare, directoryName, isRecord, randomHex } from './registry.js'
 import { isScope, type MemoryScope } from './scope.js'
 import { commitFiles, readOptional, type MarkdownMemoryStore, type PreparedFile } from './store.js'
 import { nowUtcMinute } from './timestamp.js'
@@ -141,9 +141,11 @@ export interface ScopeMergePreview {
   readonly newSections: readonly string[]
 }
 
-/** The preview of an import, bound to the exact archive bytes by their SHA-256. */
+/** A merge preview bound to the archive bytes, chosen mappings, and local files.
+ *  绑定归档字节、所选项目映射和本地文件的合并预览。 */
 export interface ImportPreview {
   readonly sha256: string
+  readonly localRevision: string
   readonly exportedAt: string
   readonly projects: readonly PackageProjectPreview[]
   readonly scopes: readonly ScopeMergePreview[]
@@ -218,16 +220,17 @@ export function exportPackage(store: MarkdownMemoryStore, selection: ExportSelec
   return { fileName: `vulcan-memory-${fileStamp(now)}-${randomHex(6)}.zip`, bytes, sha256: sha256(bytes) }
 }
 
-/** Preview importing a package; mapped projects are compared with their targets, unmapped ones only listed. */
+/** Preview the archive using the local files selected by the supplied mappings.
+ *  根据传入的项目映射选择本地文件，并生成归档的导入预览。 */
 export function previewImport(store: MarkdownMemoryStore, archive: Uint8Array, name: string, mappings: readonly ProjectMapping[]): ImportPreview {
   const pkg = readPackage(archive, name)
-  const registry = store.registry()
-  const table = mappingTable(pkg, registry, mappings, false)
+  const snapshot = readImportSnapshot(store, pkg, mappings, false)
   const scopes: ScopeMergePreview[] = []
-  for (const planned of plannedScopes(pkg, table)) {
-    const local = planned.scope === 'project' && planned.memoryProjectId === undefined
-      ? MemoryDocument.empty()
-      : store.load(planned.scope, planned.memoryProjectId)
+  for (const planned of snapshot.scopes) {
+    const original = planned.scope === 'project' && planned.memoryProjectId === undefined
+      ? undefined
+      : snapshot.originals.get(store.scopePath(planned.scope, planned.memoryProjectId))
+    const local = original === undefined ? MemoryDocument.empty() : MemoryDocument.parse(original)
     const outcome = merge(local, MemoryDocument.parse(planned.text), planned.scope, () => undefined)
     scopes.push({
       scope: planned.scope,
@@ -242,29 +245,32 @@ export function previewImport(store: MarkdownMemoryStore, archive: Uint8Array, n
   }
   return {
     sha256: pkg.sha256,
+    localRevision: snapshot.revision,
     exportedAt: pkg.manifest.exportedAt,
-    projects: pkg.manifest.projects.map(project => ({ project, candidates: projectCandidates(project, registry) })),
+    projects: pkg.manifest.projects.map(project => ({ project, candidates: projectCandidates(project, snapshot.registry) })),
     scopes,
   }
 }
 
 /**
- * Apply a previewed import: the archive must still have the previewed SHA-256, every packaged
- * project needs a mapping and every conflict a resolution. Replaced files are backed up first,
- * then every file and the registry are committed as one batch.
+ * Apply the archive and choices only against the reviewed local revision and return the merge report.
+ *  仅在本地修订仍与预览一致时应用归档及冲突选择，并返回合并报告。
  */
 export function applyImport(
   store: MarkdownMemoryStore,
   archive: Uint8Array,
   name: string,
   expectedSha256: string,
+  expectedLocalRevision: string,
   mappings: readonly ProjectMapping[],
   resolutions: readonly ConflictResolution[],
 ): ImportReport {
   const pkg = readPackage(archive, name)
   if (pkg.sha256 !== expectedSha256) throw MemoryError.invalid('The package changed since it was previewed; preview it again.')
-  const registry = store.registry()
-  const table = mappingTable(pkg, registry, mappings, true)
+  const snapshot = readImportSnapshot(store, pkg, mappings, true)
+  if (snapshot.revision !== expectedLocalRevision) {
+    throw new MemoryError('concurrent_modification', 'Local memory changed since it was previewed; preview it again.')
+  }
   const choices = new Map<string, ConflictChoice>()
   for (const resolution of resolutions) {
     const key = conflictKey(resolution.scope, resolution.packageProjectId, resolution.nodeId)
@@ -278,18 +284,20 @@ export function applyImport(
   let unchanged = 0
   const createdProjects: string[] = []
   let resolved = 0
-  for (const planned of plannedScopes(pkg, table)) {
+  for (const planned of snapshot.scopes) {
     if (planned.scope === 'project' && planned.memoryProjectId === undefined) {
       const project = pkg.manifest.projects.find(candidate => candidate.id === planned.packageProjectId)
       if (project === undefined) throw new Error('planned projects come from the manifest')
-      const id = registry.createUnbound(project.name, [...project.paths], project.firstCommit, now)
+      const id = snapshot.registry.createUnbound(project.name, [...project.paths], project.firstCommit, now)
+      const file = store.scopePath('project', id)
+      if (readOptional(file) !== undefined) throw MemoryError.concurrent(file)
       createdProjects.push(id)
       planned.memoryProjectId = id
     }
     const file = store.scopePath(planned.scope, planned.memoryProjectId)
     let entry = documents.get(file)
     if (entry === undefined) {
-      const original = readOptional(file)
+      const original = snapshot.originals.get(file)
       entry = { original, document: original === undefined ? MemoryDocument.empty() : MemoryDocument.parse(original) }
       documents.set(file, entry)
     }
@@ -314,12 +322,38 @@ export function applyImport(
     files.push({ path: file, original, text })
   }
   if (createdProjects.length > 0) {
-    const file = path.join(store.markdownDirectory, REGISTRY_FILE)
-    files.push({ path: file, original: readOptional(file), text: `${registry.toJson()}\n` })
+    files.push({ path: snapshot.registryPath, original: snapshot.registryOriginal, text: `${snapshot.registry.toJson()}\n` })
   }
   const backupDirectory = backUp(store, files, now)
   commitFiles(files)
   return { backupDirectory, added, replaced, unchanged, createdProjects }
+}
+
+/** Read the registry and affected scopes once and identify the exact input to the reviewed merge.
+ *  只读取一次项目登记表和受影响的记忆范围，生成标识本次合并输入的修订值。 */
+function readImportSnapshot(store: MarkdownMemoryStore, pkg: Package, mappings: readonly ProjectMapping[], complete: boolean) {
+  const registryPath = path.join(store.markdownDirectory, REGISTRY_FILE)
+  const registryOriginal = readOptional(registryPath)
+  const registry = registryOriginal === undefined ? new MemoryRegistry() : MemoryRegistry.parse(registryOriginal, registryPath)
+  const table = mappingTable(pkg, registry, mappings, complete)
+  const scopes = plannedScopes(pkg, table)
+  const originals = new Map<string, string | undefined>()
+  for (const planned of scopes) {
+    if (planned.scope === 'project' && planned.memoryProjectId === undefined) continue
+    const file = store.scopePath(planned.scope, planned.memoryProjectId)
+    if (!originals.has(file)) originals.set(file, readOptional(file))
+  }
+  // Normalize mapping order and encode missing files separately from empty files.
+  // 统一项目映射的顺序，并区分缺失文件与空文件。
+  const revision = sha256(Buffer.from(JSON.stringify([
+    registryOriginal ?? null,
+    pkg.manifest.projects.map(project => {
+      const target = table.get(project.id)
+      return target?.action === 'link' ? ['link', target.memoryProjectId] : target?.action ?? null
+    }),
+    [...originals].map(([file, original]) => [file, original === undefined ? null : sha256(Buffer.from(original))]),
+  ])))
+  return { registryPath, registryOriginal, registry, scopes, originals, revision }
 }
 
 /** Copy every existing file a commit replaces into a new backup directory. */

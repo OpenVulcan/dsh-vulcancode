@@ -146,6 +146,9 @@ export interface ScopeMergePreview {
 
 export interface ImportPreview {
   readonly sha256: string
+  /** Local memory and mapping revision that must accompany the confirmed import.
+   *  确认导入时必须同时提交的本地记忆和项目映射修订值。 */
+  readonly localRevision: string
   readonly exportedAt: string
   readonly projects: readonly {
     readonly project: PackageProject

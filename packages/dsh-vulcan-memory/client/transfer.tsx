@@ -167,7 +167,9 @@ function ImportDialog({ t, open, close, onImported }: { t: Translate; open: Open
       nodeId: conflict.id,
       choice: choices[conflictKey(scope, conflict)] ?? 'keep_local',
     })))
-    setReport(await callHost<ImportReport>('POST', 'import', { archive, name, expectedSha256: review.sha256, projects: mappings(), resolutions }))
+    setReport(await callHost<ImportReport>('POST', 'import', {
+      archive, name, expectedSha256: review.sha256, expectedLocalRevision: review.localRevision, projects: mappings(), resolutions,
+    }))
     onImported()
   }) }
   const fillUnset = (value: string) => { setTargets(Object.fromEntries(Object.entries(targets).map(([id, current]) => [id, current || value]))) }
@@ -278,6 +280,7 @@ function ImportDialog({ t, open, close, onImported }: { t: Translate; open: Open
         <button type="button" className="vac-btn" disabled={busy} onClick={hasProjects ? () => { setReview(undefined) } : close}>
           {hasProjects ? t('transfer.back') : t('cancel')}
         </button>
+        <button type="button" className="vac-btn" disabled={busy} onClick={toReview}>{t('transfer.refreshPreview')}</button>
         <button type="button" className="vac-btn primary" disabled={busy || review.scopes.length === 0} onClick={apply}>{t('transfer.apply')}</button>
       </>
     )

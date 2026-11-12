@@ -74,7 +74,7 @@ test('importing into the source store is a no-op', () => {
     assert.ok(scope.added.length === 0 && scope.conflicts.length === 0, JSON.stringify(scope))
     assert.ok(scope.same > 0)
   }
-  const report = applyImport(target, archive, 'a.zip', preview.sha256, mappings, [])
+  const report = applyImport(target, archive, 'a.zip', preview.sha256, preview.localRevision, mappings, [])
   assert.deepEqual([report.added, report.replaced], [0, 0])
   assert.equal(report.backupDirectory, null)
 })
@@ -94,9 +94,12 @@ test('a fresh store receives everything once', () => {
   assert.equal(user?.scope, 'user')
   assert.deepEqual(user?.newSections, [], 'preset sections match by key')
   assert.equal(user?.added.length, 1)
-  rejects(() => applyImport(target, archive, 'a.zip', preview.sha256, [], []))
+  rejects(() => applyImport(target, archive, 'a.zip', preview.sha256, preview.localRevision, [], []))
 
-  const report = applyImport(target, archive, 'a.zip', preview.sha256, [mapping(project, { action: 'create' })], [])
+  const mappings = [mapping(project, { action: 'create' })]
+  assert.equal(rejects(() => applyImport(target, archive, 'a.zip', preview.sha256, preview.localRevision, mappings, [])).kind, 'concurrent_modification')
+  const reviewed = previewImport(target, archive, 'a.zip', mappings)
+  const report = applyImport(target, archive, 'a.zip', reviewed.sha256, reviewed.localRevision, mappings, [])
   assert.equal(report.createdProjects.length, 1)
   assert.notEqual(report.backupDirectory, null, 'the user file existed')
   const created = report.createdProjects[0]
@@ -124,16 +127,38 @@ test('conflicts need a resolution', () => {
   assert.ok(conflict)
   assert.deepEqual([conflict.local.body, conflict.imported.body], ['Grace', 'Ada'])
 
-  rejects(() => applyImport(target, archive, 'a.zip', preview.sha256, mappings, []))
+  rejects(() => applyImport(target, archive, 'a.zip', preview.sha256, preview.localRevision, mappings, []))
   const take = { scope: 'user', nodeId: conflict.id, choice: 'take_imported' } as const
   const unknown = { scope: 'space', nodeId: 'm-missing', choice: 'keep_local' } as const
-  rejects(() => applyImport(target, archive, 'a.zip', preview.sha256, mappings, [take, unknown]))
-  rejects(() => applyImport(target, archive, 'a.zip', '0'.repeat(64), mappings, [take]))
-  const report = applyImport(target, archive, 'a.zip', preview.sha256, mappings, [take])
+  rejects(() => applyImport(target, archive, 'a.zip', preview.sha256, preview.localRevision, mappings, [take, unknown]))
+  rejects(() => applyImport(target, archive, 'a.zip', '0'.repeat(64), preview.localRevision, mappings, [take]))
+  const report = applyImport(target, archive, 'a.zip', preview.sha256, preview.localRevision, mappings, [take])
   assert.equal(report.replaced, 1)
   assert.equal(view(target, 'user', undefined, ['Identity', 'Name']).body, 'Ada')
   assert.ok(report.backupDirectory)
   assert.match(readFileSync(path.join(report.backupDirectory, 'user.md'), 'utf8'), /Grace/)
+})
+
+test('a preview cannot overwrite a newer edit to the same conflicting node', () => {
+  const target = store()
+  seed(target)
+  const project = context('host-a', '/work/alpha')
+  const archive = exportPackage(target, { user: true, space: false, memoryProjectIds: [] }).bytes
+  const original = view(target, 'user', undefined, ['Identity', 'Name'])
+  write(target, project, [{ action: 'replace', id: original.id, expectedRevision: original.revision, body: 'Grace' }])
+  const local = view(target, 'user', undefined, ['Identity', 'Name'])
+  const preview = previewImport(target, archive, 'a.zip', [])
+  const resolutions = [{ scope: 'user', nodeId: local.id, choice: 'take_imported' }] as const
+  write(target, project, [{ action: 'replace', id: local.id, expectedRevision: local.revision, body: 'Newer local' }])
+  const stale = rejects(() => applyImport(target, archive, 'a.zip', preview.sha256, preview.localRevision, [], resolutions))
+  assert.equal(stale.kind, 'concurrent_modification')
+  assert.equal(view(target, 'user', undefined, ['Identity', 'Name']).body, 'Newer local')
+  const refreshed = previewImport(target, archive, 'a.zip', [])
+  assert.equal(refreshed.scopes[0]?.conflicts[0]?.local.body, 'Newer local')
+  const report = applyImport(target, archive, 'a.zip', refreshed.sha256, refreshed.localRevision, [], resolutions)
+  assert.equal(view(target, 'user', undefined, ['Identity', 'Name']).body, 'Ada')
+  assert.ok(report.backupDirectory)
+  assert.match(readFileSync(path.join(report.backupDirectory, 'user.md'), 'utf8'), /Newer local/)
 })
 
 test('keeping both adds a copy', () => {
@@ -144,7 +169,8 @@ test('keeping both adds a copy', () => {
   write(target, context('host-a', '/work/alpha'), [{ action: 'replace', id: shell.id, expectedRevision: shell.revision, body: 'Bash' }])
   const mappings = [mapping(project, { action: 'ignore' })]
   const preview = previewImport(target, archive, 'a.zip', mappings)
-  const report = applyImport(target, archive, 'a.zip', preview.sha256, mappings, [{ scope: 'space', nodeId: shell.id, choice: 'keep_both' }])
+  const report = applyImport(target, archive, 'a.zip', preview.sha256, preview.localRevision, mappings,
+    [{ scope: 'space', nodeId: shell.id, choice: 'keep_both' }])
   assert.equal(report.added, 1)
   const shells = target.load('space', undefined).views('space').filter(item => JSON.stringify(item.path) === '["Base","Shell"]')
   assert.equal(shells.length, 2)
