@@ -33,10 +33,11 @@ dsh-vulcancode 是 DeepSeek Harness（dsh）的社区插件套件。安装一个
 - **工具调用可审查**，Vulcan Decision 在执行前使用云端或本机模型判定，并支持配置复核和人工确认。
 - **技能与经验可复用**，LuaSkills 把技能发布为 AI 可调用的工具，Markdown 长期记忆保留用户、空间和项目经验。
 - **模型可单独配置思考级别**，pi-ai 模型的可选级别和接口传输值可按供应商、按模型设置。
+- **语音输入**使用 OpenVulcan 账号所属站点的免费转写服务，把口述内容插入对话草稿。
 
 ## 架构与包结构
 
-dsh 通过套件的 `cordis.patch.yml` 装载七个插件。自动审批调用判定引擎，使用云端判定时通过 `openvulcanAccount` 获取账号凭据。账号插件和判定引擎复用同一账号库。发布包随附这九个工作区依赖，用户只需安装套件。
+dsh 通过套件的 `cordis.patch.yml` 装载八个插件。自动审批和语音输入通过 `openvulcanAccount` 获取云端服务所需的凭据。账号插件和判定引擎复用同一账号库。发布包随附工作区依赖，用户只需安装套件。
 
 ### 套件入口
 
@@ -73,6 +74,10 @@ dsh 通过套件的 `cordis.patch.yml` 装载七个插件。自动审批调用�
 #### `@openvulcan/dsh-vulcan-style`
 
 在「设置 › 通用设置」的「Vulcan 界面风格」选择跟随系统、亮色、暗色、指挥舱或 dsh 自带主题。直角开关可与任意主题搭配，覆盖 Windows 桌面内容区等界面边角。设置布局为模型目录、内置插件和 LuaSkills 等页面留出更多可用宽度。源码在 [packages/dsh-vulcan-style](packages/dsh-vulcan-style)。
+
+#### `@openvulcan/dsh-vulcan-voice-input`
+
+登录 OpenVulcan 后，将鼠标移到对话输入框的麦克风按钮，可选择所属站点发布的免费转写模型、优先语言、麦克风和录音快捷键。可在「设置 › OpenVulcan 语音输入」测试麦克风和查看服务状态。录音快捷键支持单独绑定右 Ctrl 等左右修饰键。按住麦克风按钮或在输入框内按住所设快捷键说话，松开后转写内容会回填当前草稿。连续录满 120 秒会自动停止并转写。源码在 [packages/dsh-vulcan-voice-input](packages/dsh-vulcan-voice-input)。
 
 ### 共享库与命令行
 

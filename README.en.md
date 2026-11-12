@@ -33,10 +33,11 @@ DeepSeek develops dsh independently of this community project.
 - **Tool-call review** with a cloud or local Vulcan Decision model, optional LLM review, and user confirmation before execution.
 - **Reusable skills and memory** through LuaSkills tools and persistent Markdown memory for the user, space, and project.
 - **Per-model thinking settings** for the levels shown in the pi-ai model picker and the values sent to each model endpoint.
+- **Voice input** uses the free transcription service on your OpenVulcan account's site and inserts the result into the conversation draft.
 
 ## Architecture and packages
 
-dsh loads seven plugins through the suite's `cordis.patch.yml`. The approval plugin calls the decision engine and uses `openvulcanAccount` for cloud credentials. The account plugin and the decision engine share the account library. The release bundles all nine workspace dependencies in the suite's tarball.
+dsh loads eight plugins through the suite's `cordis.patch.yml`. Auto approval and voice input get their cloud credentials from `openvulcanAccount`. The account plugin and the decision engine share the account library. The suite's tarball bundles its workspace dependencies.
 
 ### Suite entry point
 
@@ -73,6 +74,10 @@ In Settings › Models, open Custom thinking levels on a configured pi-ai provid
 #### `@openvulcan/dsh-vulcan-style`
 
 Use Vulcan style under Settings › General to follow the system or choose Light, Dark, Command, or the built-in dsh theme. Square corners work with any theme and apply to surfaces such as the Windows desktop content frame. The wider settings layout gives the model catalog, built-in plugins, and LuaSkills more room. See [packages/dsh-vulcan-style](packages/dsh-vulcan-style).
+
+#### `@openvulcan/dsh-vulcan-voice-input`
+
+Sign in to OpenVulcan, then hover over the composer microphone to choose a free transcription model from your account's site, a preferred language, a microphone, and a recording shortcut. Open Settings › OpenVulcan voice input to test your microphone or check service status. You can bind a single left or right modifier, such as Right Ctrl. Hold the microphone button or your shortcut in the composer to record. Release it to insert the transcript into the current draft. After 120 seconds, recording stops and transcription starts automatically. See [packages/dsh-vulcan-voice-input](packages/dsh-vulcan-voice-input).
 
 ### Shared libraries and CLI
 

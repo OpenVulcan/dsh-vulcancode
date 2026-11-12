@@ -296,6 +296,34 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
+  packages/dsh-vulcan-voice-input:
+    dependencies:
+      '@openvulcan/openvulcan-account':
+        specifier: workspace:*
+        version: link:../openvulcan-account
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.1.0
+        version: 4.1.0(@deepseek-ai/cordis-plugin-include@1.1.0)(@deepseek-ai/cordis-plugin-loader@1.1.0)
+      '@deepseek-ai/dsh-client-connection':
+        specifier: 0.2.2-rc.1
+        version: 0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)(@deepseek-ai/dsh-scope@0.2.2-rc.1(@deepseek-ai/cordis@4.1.0))
+      '@openvulcan/dsh-vulcan-account':
+        specifier: workspace:*
+        version: link:../dsh-vulcan-account
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.19.2
+      '@types/react':
+        specifier: ^18.3.31
+        version: 18.3.31
+      '@types/react-dom':
+        specifier: ^18.3.7
+        version: 18.3.7(@types/react@18.3.31)
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+
   packages/dsh-vulcancode:
     dependencies:
       '@openvulcan/dsh-decision-guard':
@@ -319,6 +347,9 @@ importers:
       '@openvulcan/dsh-vulcan-style':
         specifier: workspace:*
         version: link:../dsh-vulcan-style
+      '@openvulcan/dsh-vulcan-voice-input':
+        specifier: workspace:*
+        version: link:../dsh-vulcan-voice-input
 
   packages/openvulcan-account:
     devDependencies:

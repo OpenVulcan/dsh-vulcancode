@@ -17,3 +17,5 @@
           name: '@openvulcan/dsh-vulcan-memory'
         - id: vulcan-reasoning
           name: '@openvulcan/dsh-vulcan-reasoning'
+        - id: vulcan-voice-input
+          name: '@openvulcan/dsh-vulcan-voice-input'
