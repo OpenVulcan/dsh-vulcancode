@@ -7,7 +7,7 @@ import path from 'node:path'
 import { test } from 'node:test'
 
 import { DEFAULT_BUDGET } from '../settings.js'
-import { EXPORT_FORMAT_VERSION } from './constants.js'
+import { EXPORT_FORMAT_VERSION, MAX_FILE_BYTES } from './constants.js'
 import type { NodeView } from './document.js'
 import { MemoryError } from './errors.js'
 import { parseWriteOperation, writeMemory } from './operations.js'
@@ -238,6 +238,32 @@ test('an earlier choice changes the reviewed revision of a downstream conflict',
   const report = applyImport(target, archive, 'a.zip', reviewed.sha256, reviewed.localRevision, mappings, [takeFirst, choice])
   assert.deepEqual([report.added, report.replaced], [1, 1])
   assert.deepEqual(target.load('project', id).views('project').map(node => node.body), ['First content', 'Second content'])
+})
+
+test('the final file limit is shown before committing a shared project destination', () => {
+  const target = store()
+  const id = target.updateRegistry(registry => registry.createUnbound('Target', [], undefined, '2026-11-13T00:00Z'))
+  const entries = ['pack-a', 'pack-b'].map(project => [
+    `projects/${project}.md`, `# ${project}\n\n${'文'.repeat(Math.floor(MAX_FILE_BYTES / 6) + 20)}\n`,
+  ] as const)
+  const archive = writeArchive(JSON.stringify({
+    format: 'vulcan-markdown-memory', version: EXPORT_FORMAT_VERSION, exportedAt: '2026-11-13T00:00Z',
+    user: false, space: false, projects: ['pack-a', 'pack-b'].map(project => ({ id: project, name: project, paths: [] })),
+  }), entries)
+  const mappings = ['pack-a', 'pack-b'].map(project => mapping(project, { action: 'link', memoryProjectId: id }))
+  const preview = previewImport(target, archive, 'a.zip', mappings)
+  assert.equal(preview.oversized.length, 1)
+  const oversized = preview.oversized[0]
+  assert.ok(oversized)
+  assert.deepEqual([oversized.scope, oversized.memoryProjectId, oversized.maxBytes], ['project', id, MAX_FILE_BYTES])
+  assert.ok(oversized.bytes > MAX_FILE_BYTES)
+  assert.match(rejects(() => applyImport(target, archive, 'a.zip', preview.sha256, preview.localRevision, mappings, [])).message,
+    new RegExp(`would grow to ${oversized.bytes} bytes`))
+  assert.equal(target.readFileText('project', id), '')
+  const reduced = [mapping('pack-a', { action: 'link', memoryProjectId: id }), mapping('pack-b', { action: 'create' })]
+  const reviewed = previewImport(target, archive, 'a.zip', reduced)
+  assert.deepEqual(reviewed.oversized, [])
+  assert.equal(applyImport(target, archive, 'a.zip', reviewed.sha256, reviewed.localRevision, reduced, []).createdProjects.length, 1)
 })
 
 test('duplicates are kept and projects are suggested', () => {

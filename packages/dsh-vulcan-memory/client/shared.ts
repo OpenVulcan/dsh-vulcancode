@@ -160,6 +160,17 @@ export interface ImportPreview {
     readonly candidates: readonly { readonly memoryProjectId: string; readonly name: string; readonly reasons: readonly string[] }[]
   }[]
   readonly scopes: readonly ScopeMergePreview[]
+  readonly oversized: readonly OversizedDestination[]
+}
+
+/** A staged destination that must shrink before the import can proceed.
+ *  必须缩小后才可导入的暂存目标。 */
+interface OversizedDestination {
+  readonly scope: MemoryScope
+  readonly packageProjectId: string | null
+  readonly memoryProjectId: string | null
+  readonly bytes: number
+  readonly maxBytes: number
 }
 
 export interface ImportReport {

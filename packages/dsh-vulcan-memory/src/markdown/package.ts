@@ -156,6 +156,17 @@ export interface ImportPreview {
   readonly exportedAt: string
   readonly projects: readonly PackageProjectPreview[]
   readonly scopes: readonly ScopeMergePreview[]
+  readonly oversized: readonly OversizedDestination[]
+}
+
+/** A destination whose staged file exceeds the Markdown file limit.
+ *  暂存文件超过 Markdown 单文件上限的导入目标。 */
+export interface OversizedDestination {
+  readonly scope: MemoryScope
+  readonly packageProjectId: string | null
+  readonly memoryProjectId: string | null
+  readonly bytes: number
+  readonly maxBytes: number
 }
 
 export interface ImportReport {
@@ -193,6 +204,7 @@ interface PlannedScope {
 /** One destination and its staged document. Preserve the original bytes for backup and commit.
  *  一个目标文件及其暂存文档。保留原始字节以便备份和提交。 */
 interface StagedDocument {
+  readonly planned: PlannedScope
   readonly original: string | undefined
   document: MemoryDocument
 }
@@ -266,12 +278,22 @@ export function previewImport(
       newSections: outcome.newSections,
     })
   }
+  const oversized: OversizedDestination[] = []
+  for (const entry of documents.values()) {
+    const text = changedText(entry)
+    if (text === undefined) continue
+    const bytes = byteLength(text)
+    if (bytes <= MAX_FILE_BYTES) continue
+    const { scope, memoryProjectId, packageProjectId } = entry.planned
+    oversized.push({ scope, memoryProjectId: memoryProjectId ?? null, packageProjectId: packageProjectId ?? null, bytes, maxBytes: MAX_FILE_BYTES })
+  }
   return {
     sha256: pkg.sha256,
     localRevision: snapshot.revision,
     exportedAt: pkg.manifest.exportedAt,
     projects: pkg.manifest.projects.map(project => ({ project, candidates: projectCandidates(project, snapshot.registry) })),
     scopes,
+    oversized,
   }
 }
 
@@ -327,13 +349,13 @@ export function applyImport(
   }
   if (resolved !== choices.size) throw MemoryError.invalid('A resolution names a conflict this import does not have; preview it again.')
   const files: PreparedFile[] = []
-  for (const [file, { original, document }] of documents) {
-    const text = document.render()
-    if (original === text || (original === undefined && text === '')) continue
+  for (const [file, entry] of documents) {
+    const text = changedText(entry)
+    if (text === undefined) continue
     if (byteLength(text) > MAX_FILE_BYTES) {
       throw MemoryError.invalid(`\`${file}\` would grow to ${byteLength(text)} bytes, above the ${MAX_FILE_BYTES}-byte limit.`)
     }
-    files.push({ path: file, original, text })
+    files.push({ path: file, original: entry.original, text })
   }
   if (createdProjects.length > 0) {
     files.push({ path: snapshot.registryPath, original: snapshot.registryOriginal, text: `${snapshot.registry.toJson()}\n` })
@@ -341,6 +363,13 @@ export function applyImport(
   const backupDirectory = backUp(store, files, now)
   commitFiles(files)
   return { backupDirectory, added, replaced, unchanged, createdProjects }
+}
+
+/** Render the exact bytes that would be written, skipping unchanged or absent empty files.
+ *  渲染实际将写入的内容，跳过未变更或尚未创建的空文件。 */
+function changedText({ original, document }: StagedDocument): string | undefined {
+  const text = document.render()
+  return (original ?? '') === text ? undefined : text
 }
 
 /** Use the same staged destination and merge order for preview and commit.
@@ -353,16 +382,15 @@ function stageScope(
   choose: (conflict: Omit<NodeConflict, 'choice'>) => ConflictChoice,
 ): MergeOutcome {
   const imported = MemoryDocument.parse(planned.text)
-  // A not-yet-created project is independent of every other destination.
-  // 尚未创建的项目与其他任何导入目标相互独立。
-  if (planned.scope === 'project' && planned.memoryProjectId === undefined) {
-    return merge(MemoryDocument.empty(), imported, planned.scope, choose)
-  }
-  const file = store.scopePath(planned.scope, planned.memoryProjectId)
+  // Give each future project a distinct preview key that cannot alias a local path.
+  // 为每个将创建的项目分配独立的预览键，避免与本地路径重合。
+  const file = planned.scope === 'project' && planned.memoryProjectId === undefined
+    ? `\0${planned.packageProjectId}`
+    : store.scopePath(planned.scope, planned.memoryProjectId)
   let entry = documents.get(file)
   if (entry === undefined) {
     const original = originals.get(file)
-    entry = { original, document: original === undefined ? MemoryDocument.empty() : MemoryDocument.parse(original) }
+    entry = { planned, original, document: original === undefined ? MemoryDocument.empty() : MemoryDocument.parse(original) }
     documents.set(file, entry)
   }
   const outcome = merge(entry.document, imported, planned.scope, choose)

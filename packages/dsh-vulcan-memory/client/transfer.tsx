@@ -236,6 +236,17 @@ function ImportDialog({ t, open, close, onImported }: { t: Translate; open: Open
     body = (
       <>
         {review.scopes.length === 0 ? <p className="vac-hint">{t('transfer.nothing')}</p> : null}
+        {review.oversized.map(destination => (
+          <p key={`${destination.scope}:${destination.memoryProjectId ?? destination.packageProjectId ?? ''}`} className="vac-error" role="alert">
+            {fill(t('transfer.oversized'), {
+              target: destination.scope === 'project'
+                ? localProjects.find(project => project.id === destination.memoryProjectId)?.name ?? projectName(destination.packageProjectId)
+                : t(`nav.${destination.scope}`),
+              bytes: destination.bytes,
+              limit: destination.maxBytes,
+            })}
+          </p>
+        ))}
         {review.scopes.map(scope => (
           <div key={`${scope.scope}:${scope.packageProjectId ?? ''}`} className="vmm-import-scope">
             <h4>{scope.scope === 'project' ? fill(t('transfer.projectScope'), { name: projectName(scope.packageProjectId) }) : t(`nav.${scope.scope}` as Key)}</h4>
@@ -277,7 +288,7 @@ function ImportDialog({ t, open, close, onImported }: { t: Translate; open: Open
           {hasProjects ? t('transfer.back') : t('cancel')}
         </button>
         <button type="button" className="vac-btn" disabled={busy} onClick={toReview}>{t('transfer.refreshPreview')}</button>
-        <button type="button" className="vac-btn primary" disabled={busy || review.scopes.length === 0} onClick={apply}>{t('transfer.apply')}</button>
+        <button type="button" className="vac-btn primary" disabled={busy || review.scopes.length === 0 || review.oversized.length !== 0} onClick={apply}>{t('transfer.apply')}</button>
       </>
     )
   }
