@@ -117,3 +117,63 @@ test('free profile drafts require approval for the exact default offer and never
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test('consent revocation supersedes a pending approval and a reapproved grant cannot revive old inference', async (t) => {
+  // Two service instances use independent SQLite connections, as separate DSH processes do.
+  // 两个服务实例使用独立的 SQLite 连接，与不同 DSH 进程的行为一致。
+  const root = await mkdtemp(path.join(tmpdir(), 'dsh-sqlite-consent-race-'))
+  const credential: Credential = {
+    site: 'cn', auth_origin: 'https://auth.openvulcan.cn', authorization_id: 'fixture',
+    access_token: 'fixture-token', expires_at: '2100-01-01T00:00:00Z',
+  }
+  const account = { status: async () => ({ signedIn: true }), credential: async () => credential }
+  const first = new StructuredMemory(root, () => true, () => account)
+  const second = new StructuredMemory(root, () => true, () => account)
+  const approvalStarted = Promise.withResolvers<void>()
+  const releaseApproval = Promise.withResolvers<void>()
+  const inferenceStarted = Promise.withResolvers<void>()
+  const releaseInference = Promise.withResolvers<void>()
+  let delayApproval = false
+  t.mock.method(globalThis, 'fetch', async (url: string) => {
+    if (url.endsWith('/capabilities')) {
+      if (delayApproval) {
+        delayApproval = false
+        approvalStarted.resolve()
+        await releaseApproval.promise
+      }
+      return Response.json({ contract_version: 1, default_id: 'free', models: [{
+        id: 'free', name: 'Free', consent_revision: 'a'.repeat(64), embedding_dimension: 2,
+        providers: ['inference', 'embedding'].map(capability => ({
+          capability, model: 'test', provider: 'test', region: 'test', data_policy: 'test', privacy_url: 'https://example.org/',
+        })),
+      }] })
+    }
+    inferenceStarted.resolve()
+    await releaseInference.promise
+    return Response.json({ result: { accepted_nodes: [{ normalized_content: 'Outdated result' }] } })
+  })
+  try {
+    const { offer } = await first.status()
+    assert.ok(offer)
+    delayApproval = true
+    const oldApproval = assert.rejects(first.consent(offer.consent), /newer memory consent/)
+    await approvalStarted.promise
+    await second.consent(null)
+    releaseApproval.resolve()
+    await oldApproval
+    assert.equal((await first.status()).hasConsent, false)
+
+    await first.consent(offer.consent)
+    const oldInference = assert.rejects(first.draft('user', 'Fixture'), /approve/)
+    await inferenceStarted.promise
+    await second.consent(null)
+    await second.consent(offer.consent)
+    releaseInference.resolve()
+    await oldInference
+    assert.equal((await first.status()).approved, true)
+  } finally {
+    first.dispose()
+    second.dispose()
+    await rm(root, { recursive: true, force: true })
+  }
+})

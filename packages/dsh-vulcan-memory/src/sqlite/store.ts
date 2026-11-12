@@ -37,6 +37,13 @@ export const consentSchema = z.object({ binding: z.string(), id: z.string(), rev
 // 表示持久化的云端授权同意记录。
 export type Consent = z.infer<typeof consentSchema>
 
+// Pair consent with a persisted revision shared by every DSH process opening the database.
+// 将同意记录与持久化版本配对，供打开该数据库的所有 DSH 进程共享。
+interface ConsentState {
+  readonly revision: string
+  readonly grant: Consent | null
+}
+
 // Scope predicate shared by reads and mutations. An empty project matches only global records.
 // 读写共用的范围条件，空项目只能命中全局记录。
 const SCOPE = "(scope <> 'project' OR project = ?)"
@@ -68,6 +75,8 @@ export class SqliteStore {
         CREATE INDEX IF NOT EXISTS records_scope ON records(project, kind, updated);
         CREATE VIRTUAL TABLE IF NOT EXISTS records_fts USING fts5(id UNINDEXED, tokens);
         CREATE TABLE IF NOT EXISTS consent (singleton INTEGER PRIMARY KEY CHECK(singleton=1), value TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS consent_revision (singleton INTEGER PRIMARY KEY CHECK(singleton=1), revision TEXT NOT NULL);
+        INSERT OR IGNORE INTO consent_revision VALUES (1,'0');
         CREATE TABLE IF NOT EXISTS indexed (
           model TEXT NOT NULL, id TEXT NOT NULL, revision TEXT NOT NULL, PRIMARY KEY(model,id)
         );
@@ -157,18 +166,41 @@ export class SqliteStore {
     }
   }
 
-  /** Return the current consent, if the user has approved an offer.
-   *  返回当前同意记录，用户尚未同意时返回空值。 */
-  consent(): Consent | null {
-    const row = this.db.prepare('SELECT value FROM consent WHERE singleton=1').get()
-    return row === undefined ? null : consentSchema.parse(JSON.parse(String(row.value)))
+  /** Read the active grant and revision in one SQLite snapshot.
+   *  在同一 SQLite 快照中读取当前授权和版本。 */
+  consent(): ConsentState {
+    const row = this.db.prepare(`
+      SELECT revision,(SELECT value FROM consent WHERE singleton=1) AS value
+      FROM consent_revision WHERE singleton=1
+    `).get()
+    if (row === undefined || typeof row.revision !== 'string') throw new Error('Missing SQLite consent revision.')
+    return { revision: row.revision, grant: row.value === null ? null : consentSchema.parse(JSON.parse(String(row.value))) }
   }
 
-  /** Store or revoke the explicit approval for cloud inference.
-   *  保存或撤销对云端推理的明确授权。 */
-  saveConsent(consent: Consent | null): void {
-    if (consent === null) this.db.exec('DELETE FROM consent')
-    else this.db.prepare('INSERT OR REPLACE INTO consent VALUES (1,?)').run(JSON.stringify(consent))
+  /** Reserve the newest consent decision before external I/O. Revocation removes the grant atomically.
+   *  在外部 I/O 前登记最新同意决定，撤销时原子删除授权。 */
+  beginConsentChange(revoke: boolean): string {
+    const revision = randomUUID()
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      this.db.prepare('UPDATE consent_revision SET revision=? WHERE singleton=1').run(revision)
+      if (revoke) this.db.exec('DELETE FROM consent')
+      this.db.exec('COMMIT')
+      return revision
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  /** Commit the checked offer only if no later decision has superseded it.
+   *  仅当校验过的方案未被后续决定取代时提交。 */
+  confirmConsent(revision: string, consent: Consent): boolean {
+    const result = this.db.prepare(`
+      INSERT OR REPLACE INTO consent
+      SELECT 1,? FROM consent_revision WHERE singleton=1 AND revision=?
+    `).run(JSON.stringify(consent), revision)
+    return Number(result.changes) === 1
   }
 
   /** Return one eligible batch of memory records whose current revision still needs a vector.

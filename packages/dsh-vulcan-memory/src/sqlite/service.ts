@@ -12,6 +12,13 @@ import { SqliteStore, type Consent, type RecordEntry } from './store.js'
 // 解析原生子进程的有限响应，避免在 dsh 主进程中加载 Koffi。
 const hitsSchema = z.object({ hits: z.array(z.object({ id: z.uuid(), revision: z.uuid() })).max(24) })
 
+// Bind one inference operation to the grant revision checked before its first cloud request.
+// 将一次推理操作绑定到首个云端请求前校验的授权版本。
+interface ApprovedOffer {
+  readonly offer: CloudOffer
+  readonly revision: string
+}
+
 /** Manage one SQLite mode instance, including consent-gated access to the free cloud service.
  *  管理一个 SQLite 模式实例，以及经用户同意的免费云端服务访问。 */
 export class StructuredMemory {
@@ -57,9 +64,9 @@ export class StructuredMemory {
       nativeStatus(this.root), this.cloud.offer().catch(() => { cloudError = true; return null }),
     ])
     this.assertEnabled()
-    const consent = store.consent()
+    const { grant } = store.consent()
     return { native, version: NATIVE_VERSION, offer, cloudError,
-      approved: offer !== null && sameConsent(consent, offer.consent), hasConsent: consent !== null }
+      approved: offer !== null && sameConsent(grant, offer.consent), hasConsent: grant !== null }
   }
 
   /** Download the runtime on explicit request, deduplicating requests within this process.
@@ -74,22 +81,22 @@ export class StructuredMemory {
    *  保存已审阅的默认方案同意记录，或立即撤销现有同意。 */
   async consent(review: Consent | null): Promise<void> {
     const store = await this.local()
-    if (review === null) {
-      store.saveConsent(null)
-      return
-    }
+    const revision = store.beginConsentChange(review === null)
+    if (review === null) return
     const offer = await this.cloud.offer()
     this.assertEnabled()
     if (offer === null || !sameConsent(review, offer.consent)) throw MemoryError.invalid('Refresh and review the current free memory offer.')
-    store.saveConsent(offer.consent)
+    if (!store.confirmConsent(revision, offer.consent)) {
+      throw new MemoryError('concurrent_modification', 'A newer memory consent decision was saved. Refresh to see the current state.')
+    }
   }
 
   /** Generate a draft from user-entered text with approval, leaving local profiles unchanged.
    *  根据用户输入生成已获同意的草稿，保持本地画像原样。 */
   async draft(scope: 'user' | 'project', text: string, signal?: AbortSignal): Promise<string[]> {
     const store = await this.local()
-    const offer = await this.approved(store)
-    return this.cloud.draft(offer, scope, text, this.guard(store, offer, signal))
+    const approval = await this.approved(store)
+    return this.cloud.draft(approval.offer, scope, text, this.guard(store, approval, signal))
   }
 
   /** Combine local keyword hits with an explicit semantic search and return current SQLite rows.
@@ -100,8 +107,9 @@ export class StructuredMemory {
     const library = await libraryPath(this.root)
     this.assertEnabled()
     if (library === null) throw MemoryError.invalid('Install VLDB before running semantic search.')
-    const offer = await this.approved(store)
-    const guard = this.guard(store, offer, signal)
+    const approval = await this.approved(store)
+    const { offer } = approval
+    const guard = this.guard(store, approval, signal)
     guard.check()
     const model = fingerprint([offer.consent, offer.dimension])
     const pending = store.pending(project, model)
@@ -142,26 +150,31 @@ export class StructuredMemory {
 
   /** Validate local approval for a fresh offer before accessing cloud inference.
    *  调用云端推理前校验用户是否同意当前方案。 */
-  private async approved(store: SqliteStore): Promise<CloudOffer> {
-    if (store.consent() === null) throw MemoryError.invalid('Approve the OpenVulcan free memory offer in settings first.')
+  private async approved(store: SqliteStore): Promise<ApprovedOffer> {
+    const { grant, revision } = store.consent()
+    if (grant === null) throw MemoryError.invalid('Approve the OpenVulcan free memory offer in settings first.')
     const offer = await this.cloud.offer()
     if (offer === null) throw MemoryError.invalid('Sign in to OpenVulcan to use the free memory service.')
-    this.assertApproval(store, offer)
-    return offer
+    const approval = { offer, revision }
+    this.assertApproval(store, approval)
+    return approval
   }
 
   /** Check mode and consent again across async boundaries.
    *  跨越异步边界后再次检查模式和同意记录。 */
-  private assertApproval(store: SqliteStore, offer: CloudOffer): void {
+  private assertApproval(store: SqliteStore, approval: ApprovedOffer): void {
     this.assertEnabled()
-    if (!sameConsent(store.consent(), offer.consent)) throw MemoryError.invalid('Review and approve the current free memory offer.')
+    const { grant, revision } = store.consent()
+    if (revision !== approval.revision || !sameConsent(grant, approval.offer.consent)) {
+      throw MemoryError.invalid('Review and approve the current free memory offer.')
+    }
   }
 
   /** Share mode, consent and cancellation checks with asynchronous inference.
    *  将模式、同意和取消检查传入异步推理。 */
-  private guard(store: SqliteStore, offer: CloudOffer, requestSignal?: AbortSignal) {
+  private guard(store: SqliteStore, approval: ApprovedOffer, requestSignal?: AbortSignal) {
     const signal = requestSignal === undefined ? this.lifetime.signal : AbortSignal.any([this.lifetime.signal, requestSignal])
-    return { signal, check: () => { signal.throwIfAborted(); this.assertApproval(store, offer) } }
+    return { signal, check: () => { signal.throwIfAborted(); this.assertApproval(store, approval) } }
   }
 
   /** Run one isolated FFI process and resolve validated hits within a fixed deadline.
