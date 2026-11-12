@@ -75,7 +75,11 @@ dsh 通过套件的 `cordis.patch.yml` 装载八个插件。自动审批和语�
 
 #### `@openvulcan/dsh-vulcan-memory`
 
-以 Markdown 保存用户画像、空间记忆和项目记忆。向模型提供 `memory_outline`、`memory_search`、`memory_write` 与 `memory-curator` 技能，并在会话开始时按预算注入快照。侧栏「长期记忆」支持编辑、调整注入预算和导入导出。当前可用的是 Markdown 模式。源码在 [packages/dsh-vulcan-memory](packages/dsh-vulcan-memory)。
+默认使用 Markdown 保存用户画像、空间记忆和项目记忆。向模型提供 `memory_outline`、`memory_search`、`memory_write` 与 `memory-curator` 技能，并在会话开始时按预算注入快照。侧栏「长期记忆」支持编辑、调整注入预算和导入导出。源码在 [packages/dsh-vulcan-memory](packages/dsh-vulcan-memory)。
+
+在「长期记忆 → 记忆模式」选择 SQLite 并保存，可通过「记忆与画像」管理结构化记录。`node:sqlite` 保存本机数据，Jieba 和 FTS5 提供中文关键词检索，相关记忆与画像在每轮对话按需召回。模型可通过 `sqlite_memory_search`、`sqlite_memory_write` 查询和维护记录。SQLite 与 Markdown 各自保存数据。
+
+登录 OpenVulcan 并同意数据处理后，可使用账号所属站点的默认免费方案进行语义检索和生成画像建议。每次语义检索最多为 10 条待索引记忆补建向量；画像建议可在编辑框中确认后保存。首次使用语义检索前，在「记忆与画像」点击「下载 VLDB」，按平台下载并校验 GitHub Release 后缓存到 DSH 数据目录。发行库覆盖 Windows x64、macOS x64/arm64 和 Linux glibc x64/arm64。npm 包内仅包含 VLDB 接入代码。 [VLDB 发行包](https://github.com/OpenVulcan/vldb-lancedb/releases/tag/v0.1.5)
 
 #### `@openvulcan/dsh-vulcan-reasoning`
 

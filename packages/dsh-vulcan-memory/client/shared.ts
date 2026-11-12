@@ -8,7 +8,9 @@ export const PANEL_ID = 'vulcan-memory'
 const ROUTE_BASE = '/api/vulcan-memory/'
 
 export type MemoryScope = 'user' | 'space' | 'project'
-export type MemoryMode = 'off' | 'markdown' | 'vmm'
+// Mirror the three supported modes in the host settings.
+// 与主机设置中的三种模式保持一致。
+export type MemoryMode = 'off' | 'markdown' | 'sqlite'
 export type BudgetPart = 'user' | 'spaceBase' | 'projectBase' | 'spaceCatalog' | 'projectCatalog'
 export type InjectionBudget = Readonly<Record<BudgetPart, number>>
 

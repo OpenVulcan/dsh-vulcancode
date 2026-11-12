@@ -3,3 +3,6 @@ packages:
 
 allowBuilds:
   esbuild: true
+  # Koffi uses the optional prebuilt package for the current platform.
+  # Koffi 使用当前平台对应的预编译可选依赖。
+  koffi: false

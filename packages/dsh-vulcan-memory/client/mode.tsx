@@ -13,7 +13,9 @@ import {
 } from './shared'
 import { TransferSection } from './transfer'
 
-const MODES: readonly MemoryMode[] = ['off', 'vmm', 'markdown']
+// Keep the default Markdown option next to SQLite.
+// 将默认的 Markdown 选项与 SQLite 并列。
+const MODES: readonly MemoryMode[] = ['off', 'markdown', 'sqlite']
 
 export function ModeTab({ t, onSettings }: { t: Translate; onSettings: (settings: MemorySettingsView) => void }) {
   const [settings, setSettings] = useState<MemorySettingsView | undefined>(undefined)

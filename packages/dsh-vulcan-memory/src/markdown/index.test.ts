@@ -40,7 +40,7 @@ test('arguments are checked like serde with deny_unknown_fields', () => {
 test('memory is inactive outside markdown mode or for a project with memory off', () => {
   const memory = access()
   assert.equal(markdown.resolveAccess(memory.store, { ...DEFAULT_SETTINGS, mode: 'off' }, memory.context), undefined)
-  assert.equal(markdown.resolveAccess(memory.store, { ...DEFAULT_SETTINGS, mode: 'vmm' }, memory.context), undefined)
+  assert.equal(markdown.resolveAccess(memory.store, { ...DEFAULT_SETTINGS, mode: 'sqlite' }, memory.context), undefined)
 
   markdown.write(memory, AUTHOR, { operations: [{ action: 'create', scope: 'project', section: 'base', title: 'Bind the project', body: 'x' }] })
   const projectId = memory.store.registry().projectForHost('host-1')?.id

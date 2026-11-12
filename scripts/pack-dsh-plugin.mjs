@@ -39,7 +39,11 @@ function resolved(dependencies = {}) {
 /** The manifest as published: no scripts or development dependencies, exact workspace versions. */
 function published(manifest) {
   const { scripts: _scripts, devDependencies: _dev, ...rest } = manifest
-  return { ...rest, ...manifest.dependencies === undefined ? {} : { dependencies: resolved(manifest.dependencies) } }
+  return {
+    ...rest,
+    ...manifest.dependencies === undefined ? {} : { dependencies: resolved(manifest.dependencies) },
+    ...manifest.optionalDependencies === undefined ? {} : { optionalDependencies: resolved(manifest.optionalDependencies) },
+  }
 }
 
 /** The files npm would publish for the package in `dir`, as its own `files` list selects them. */
@@ -88,6 +92,9 @@ for (const name of bundled) {
 
 /** The registry dependencies of the bundled packages, which the suite installs on their behalf. */
 const registry = {}
+// Hoist optional prebuilds while preserving npm's platform selection.
+// 提升可选的预编译依赖，同时保留 npm 的平台选择机制。
+const optionalRegistry = {}
 for (const name of bundled) {
   for (const [dependency, range] of Object.entries(workspace.get(name).manifest.dependencies ?? {})) {
     if (workspace.has(dependency)) continue
@@ -95,6 +102,13 @@ for (const name of bundled) {
       throw new Error(`${dependency} is wanted as ${registry[dependency]} and as ${range} (by ${name}); align the ranges`)
     }
     registry[dependency] = range
+  }
+  for (const [dependency, range] of Object.entries(workspace.get(name).manifest.optionalDependencies ?? {})) {
+    if (workspace.has(dependency)) throw new Error(`optional workspace package ${dependency} is not supported by the bundle`)
+    if (optionalRegistry[dependency] !== undefined && optionalRegistry[dependency] !== range) {
+      throw new Error(`${dependency} has incompatible optional versions in the bundle`)
+    }
+    optionalRegistry[dependency] = range
   }
 }
 
@@ -107,6 +121,7 @@ if (fs.existsSync(path.join(ROOT, 'README.md'))) fs.copyFileSync(path.join(ROOT,
 fs.writeFileSync(path.join(STAGE, 'package.json'), `${JSON.stringify({
   ...manifest,
   dependencies: { ...manifest.dependencies, ...registry, ...Object.fromEntries(bundled.map(name => [name, workspace.get(name).manifest.version])) },
+  optionalDependencies: { ...optionalRegistry, ...manifest.optionalDependencies },
   bundleDependencies: bundled,
 }, null, 2)}\n`)
 for (const name of bundled) {

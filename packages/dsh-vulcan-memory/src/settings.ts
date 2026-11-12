@@ -12,8 +12,10 @@ import { MemoryError } from './markdown/errors.js'
 import { isRecord } from './markdown/registry.js'
 import { writeAtomically } from './markdown/store.js'
 
-/** `vmm` is a recognised mode with no implementation yet: nothing is registered or injected in it. */
-export type MemoryMode = 'off' | 'markdown' | 'vmm'
+/** The active memory backend, with Markdown as the default for existing installations.
+ * 当前记忆后端，已有安装默认使用 Markdown。
+ */
+export type MemoryMode = 'off' | 'markdown' | 'sqlite'
 
 export interface InjectionBudget {
   readonly user: number
@@ -62,14 +64,16 @@ export function parseSettings(text: string, file: string): MemorySettings {
     throw new MemoryError('unsupported_format', `Memory settings \`${file}\` must declare format version ${SETTINGS_FORMAT_VERSION}.`)
   }
   if (Object.keys(value).some(key => !['version', 'mode', 'budget'].includes(key))) throw MemoryError.json(file, 'unknown settings field')
-  const settings = { mode: value['mode'], budget: value['budget'] }
+  // The retired VMM placeholder never stored data or injected memory, so its saved behavior is off.
+  // 旧 VMM 占位模式从未存储或注入记忆，因此按原行为读取为关闭。
+  const settings = { mode: value['mode'] === 'vmm' ? 'off' : value['mode'], budget: value['budget'] }
   validateSettings(settings, file)
   return settings
 }
 
 /** Check the shape and that every budget part is a whole number of at most {@link MAX_PART_TOKENS}. */
 export function validateSettings(settings: { mode: unknown; budget: unknown }, file = SETTINGS_FILE): asserts settings is MemorySettings {
-  if (settings.mode !== 'off' && settings.mode !== 'markdown' && settings.mode !== 'vmm') throw MemoryError.json(file, '`mode` must be off, markdown or vmm')
+  if (settings.mode !== 'off' && settings.mode !== 'markdown' && settings.mode !== 'sqlite') throw MemoryError.json(file, '`mode` must be off, markdown or sqlite')
   const budget = settings.budget
   if (!isRecord(budget) || Object.keys(budget).length !== BUDGET_KEYS.length
     || !BUDGET_KEYS.every(key => Number.isSafeInteger(budget[key]) && (budget[key] as number) >= 0)) {

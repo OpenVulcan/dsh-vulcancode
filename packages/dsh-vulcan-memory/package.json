@@ -1,7 +1,7 @@
 {
   "name": "@openvulcan/dsh-vulcan-memory",
   "version": "0.4.4",
-  "description": "Long-term Markdown memory for DeepSeek Harness, ported from VulcanCode: memory tools for the model, a per-conversation memory snapshot, the memory-curator skill and a memory page with import and export.",
+  "description": "Long-term memory for DeepSeek Harness with Markdown and local SQLite modes, Chinese full-text search, profiles and optional OpenVulcan vector retrieval.",
   "license": "MIT",
   "icon": "./assets/memory-icon.png",
   "repository": {
@@ -44,9 +44,18 @@
     }
   },
   "dependencies": {
+    "@node-rs/jieba": "2.0.4",
+    "@openvulcan/openvulcan-account": "workspace:*",
     "fflate": "^0.8.3",
     "mdast-util-from-markdown": "^2.0.2",
     "zod": "4.4.3"
+  },
+  "optionalDependencies": {
+    "@koromix/koffi-darwin-arm64": "3.3.7",
+    "@koromix/koffi-darwin-x64": "3.3.7",
+    "@koromix/koffi-linux-arm64": "3.3.7",
+    "@koromix/koffi-linux-x64": "3.3.7",
+    "@koromix/koffi-win32-x64": "3.3.7"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.5",
@@ -63,6 +72,7 @@
     "@deepseek-ai/dsh-workspace": "^0.2.1-rc.2"
   },
   "devDependencies": {
+    "@openvulcan/dsh-vulcan-account": "workspace:*",
     "@deepseek-ai/cordis": "4.1.0",
     "@deepseek-ai/dsh-agent": "0.2.2-rc.1",
     "@deepseek-ai/dsh-client-connection": "0.2.2-rc.1",
@@ -78,6 +88,7 @@
     "@types/node": "^24.0.0",
     "@types/react": "^18.3.31",
     "@types/react-dom": "^18.3.7",
+    "koffi": "3.3.7",
     "typescript": "^5.9.0"
   },
   "publishConfig": {
