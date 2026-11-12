@@ -110,6 +110,10 @@ ${V} [data-slot="sidebar"] > * > :has(> * > [data-slot="sidebar.settings"]) { pa
 ${V} [data-composer-card] { box-shadow: 0 0 0 1px var(--vulcan-line-strong), var(--vulcan-shadow-1); transition: box-shadow .16s ease; }
 ${V} [data-composer-card]:focus-within { box-shadow: 0 0 0 1px var(--vulcan-ink-3), var(--vulcan-shadow-2); }
 
+/* Pair the host tooltip's themed ink background with its matching inverse text. */
+/* 为宿主提示框的主题墨色底板配上对应的反色文字。 */
+${V} [role="tooltip"][data-side] { color: var(--vulcan-ink-inverse); }
+
 /* Menus and dialogs are framed raised plates; a dialog's backdrop is a light frosted glass. */
 ${V} [role="menu"][data-menu-material] { box-shadow: 0 0 0 1px var(--vulcan-line-strong), var(--vulcan-shadow-2); }
 ${V} [role="dialog"][aria-modal="true"] { box-shadow: 0 0 0 1px var(--vulcan-line-strong), var(--vulcan-shadow-2); }
