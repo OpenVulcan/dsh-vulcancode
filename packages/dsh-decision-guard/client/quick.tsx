@@ -55,8 +55,8 @@ export function QuickSetting({ useProjection, t: translate, services, setUnatten
   if (value === undefined) return null
   const governed = value.mode === 'standalone' || permissions?.currentValue === AUTO_PRESET
   const unattended = view?.unattended === true
-  const decision = decisionStatus(t, value, live, models?.kind === 'ready' ? models.models : undefined)
-  const dot = !governed ? 'off' : decision.tone === 'ok' ? 'ok' : 'warn'
+  const decision = decisionStatus(t, value, live, models)
+  const dot = !governed || decision.tone === 'outline' ? 'off' : decision.tone === 'ok' ? 'ok' : 'warn'
   return (
     <span className="vdg">
       <button

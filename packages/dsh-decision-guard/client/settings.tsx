@@ -12,7 +12,7 @@ import { AccountSection, EndpointsSection, lockEndpoint, ModelSection } from './
 import { LocalSections } from './local'
 import { RecordsPanel } from './records'
 import {
-  callPanel, DEFAULT_ASK_TIMEOUT, MAX_ASK_TIMEOUT, MAX_PROMPT_CHARS, running, type GuardSettings, type PanelState, type Services,
+  callPanel, DEFAULT_ASK_TIMEOUT, MAX_ASK_TIMEOUT, MAX_PROMPT_CHARS, running, type GuardSettings, type ModelList, type PanelState, type Services,
 } from './shared'
 import { Badge, Choices, ErrorLine, Section, Segments, useAction, usePolling, useSettings, useWatch, type Tone } from './ui'
 
@@ -32,13 +32,19 @@ type SettingsView = typeof SETTINGS_VIEWS[number]
 
 type Save = ReturnType<typeof useSettings>['save']
 
-/** What the status section says about decisions, from the saved settings and this machine's state. */
-export function decisionStatus(t: Translate, value: GuardSettings, live: PanelState | null | undefined, models: readonly string[] | undefined): { tone: Tone; text: string } {
+/**
+ * Describe the configured backend using the latest account and model-list response.
+ * 使用最新账号和模型目录响应描述已配置的判定后端。
+ */
+export function decisionStatus(t: Translate, value: GuardSettings, live: PanelState | null | undefined, list: ModelList | undefined): { tone: Tone; text: string } {
   if (live == null) return { tone: 'outline', text: t('loading') }
   if (value.backend === 'cloud') {
     if (!live.account.signedIn) return { tone: 'warn', text: t('status.decision.signedOut') }
-    const model = value.cloudModel === '' ? models?.[0] : value.cloudModel
-    if (model === undefined || (models !== undefined && !models.includes(model))) return { tone: 'warn', text: t('status.decision.cloudNoModel') }
+    if (list === undefined) return { tone: 'outline', text: t('model.loading') }
+    if (list.kind === 'failed') return { tone: 'warn', text: t('status.decision.cloudLoadFailed') }
+    const model = value.cloudModel === '' ? list.models[0] : value.cloudModel
+    if (list.models.length === 0 || model === undefined) return { tone: 'warn', text: t('status.decision.cloudNoModel') }
+    if (!list.models.includes(model)) return { tone: 'warn', text: fill(t('model.disabled'), { model }) }
     return { tone: 'ok', text: fill(t('status.decision.cloud'), { model }) }
   }
   const pack = live.packs.find(item => item.id === value.localPack && item.installed !== null)
@@ -51,7 +57,7 @@ function StatusSection({ services, t, value, live }: { services: Services; t: Tr
   const heldByReview = useWatch(services.autoReview)
   const listed = useWatch(services.autoListed)
   const models = useWatch(services.cloudModels)
-  const decision = decisionStatus(t, value, live, models?.kind === 'ready' ? models.models : undefined)
+  const decision = decisionStatus(t, value, live, models)
   let auto: { tone: Tone; text: Key; badge: Key }
   if (value.mode === 'standalone') auto = { tone: 'outline', text: 'status.auto.standalone', badge: 'tone.off' }
   else if (heldByReview === true) auto = { tone: 'warn', text: 'status.auto.held', badge: 'tone.warn' }
@@ -64,7 +70,7 @@ function StatusSection({ services, t, value, live }: { services: Services; t: Tr
           <span className="vdg-row-label">{t('status.decision')}</span>
           <span className="vdg-row-value">
             {decision.text}
-            <Badge tone={decision.tone}>{t(decision.tone === 'ok' ? 'tone.ok' : 'tone.warn')}</Badge>
+            {decision.tone === 'outline' ? null : <Badge tone={decision.tone}>{t(decision.tone === 'ok' ? 'tone.ok' : 'tone.warn')}</Badge>}
           </span>
         </div>
         <div className="vdg-row">

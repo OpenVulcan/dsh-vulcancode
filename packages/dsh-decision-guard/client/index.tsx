@@ -68,25 +68,42 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NAMESPACE, { zh, en }), 'vulcan-decision-guard: dictionaries')
   ctx.effect(() => {
     let accountKey: string | null | undefined
+    // A reconnect can keep the same authorization ID while replacing the backend.
+    // 重连可能更换宿主，但仍保留相同的授权标识。
+    let refreshCloud = true
+    /**
+     * Invalidate account-scoped data and read the new Host state after reconnect or plugin changes.
+     * 重连或插件变更后清除账号相关数据，并读取新的宿主状态。
+     */
     const refreshAll = (): void => {
+      refreshCloud = true
+      services.panel.reset()
+      services.cloudModels.reset()
+      services.endpoints.reset()
       services.autoReview.refresh()
       services.autoListed.refresh()
       services.panel.refresh()
     }
     const stops = [
-      ctx.remote.$on('plugin-manager/changed', () => { services.autoReview.refresh() }),
+      ctx.remote.$on('plugin-manager/changed', refreshAll),
       ctx.remote.$on('permission-presets/catalog-changed', () => { services.autoListed.refresh() }),
       ctx.on('connection/reset', refreshAll),
-      // Signing in and out happens in the account plugin; the models and endpoints belong to the account.
+      // Load the model list when the first signed-in account arrives, without opening any UI.
+      // 首次确认账号已登录时主动加载模型目录，无需打开界面。
       services.panel.subscribe(() => {
         const account = services.panel.getSnapshot()?.account
         if (account === undefined) return
-        const key = account.signedIn ? account.authorizationId ?? '' : null
-        if (accountKey !== undefined && key !== accountKey) {
-          services.cloudModels.refresh()
-          services.endpoints.refresh()
-        }
+        const key = account.signedIn ? `${account.site ?? ''}:${account.authorizationId ?? ''}` : null
+        if (!refreshCloud && key === accountKey) return
+        const hadAccount = accountKey !== undefined
         accountKey = key
+        refreshCloud = false
+        services.cloudModels.reset()
+        services.endpoints.reset()
+        if (account.signedIn) {
+          services.cloudModels.refresh()
+          if (hadAccount) services.endpoints.refresh()
+        }
       }),
     ]
     refreshAll()

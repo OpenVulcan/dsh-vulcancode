@@ -274,6 +274,15 @@ export class HostWatch<T> {
     })
   }
 
+  /**
+   * Clear the previous Host value and discard reads still in flight, keeping subscribers.
+   * 清除旧宿主值并丢弃未完成的读取，同时保留订阅。
+   */
+  reset(): void {
+    ++this.#generation
+    this.#set(undefined)
+  }
+
   /** Stop publishing answers that are still in flight. */
   close(): void {
     ++this.#generation
