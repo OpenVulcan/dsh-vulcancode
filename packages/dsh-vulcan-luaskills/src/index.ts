@@ -268,7 +268,7 @@ export function apply(ctx: Context): void {
     runtime.boot().catch((error: unknown) => { ctx.logger.warn(`cannot start LuaSkills: ${messageOf(error)}`) })
     return () => {
       generation++
-      void runtime.close()
+      return runtime.close()
     }
   }, 'vulcan-luaskills: runtime')
 }
