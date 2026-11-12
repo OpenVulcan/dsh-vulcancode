@@ -143,18 +143,34 @@ export class LocalEngine {
     return this.closing
   }
 
+  /** Run a synchronous file change between requests after any matching worker has exited.
+   *  在请求之间执行同步文件变更，并等待匹配的进程退出。 */
+  async changeFiles<T>(matches: (selection: LocalSelection) => boolean, change: () => T): Promise<T> {
+    const run = this.queue.then(async () => {
+      this.assertOpen()
+      if (this.current !== undefined && matches(this.current.selection)) await this.stop()
+      else await this.exiting
+      this.assertOpen()
+      return change()
+    })
+    this.queue = run.catch(() => {})
+    return await run
+  }
+
   /** Reject work after the owning plugin or command has closed the engine.
    *  插件或命令关闭引擎后，拒绝继续执行请求。 */
   private assertOpen(): void {
     if (this.closed) throw new DecisionError('backend_unavailable', 'the local model engine is closed')
   }
 
-  /** Answer every waiting caller, one selection at a time in arrival order. */
+  /** Drain one finite batch so arrivals during execution cannot keep file work waiting indefinitely.
+   *  每次处理有限的一批请求，避免执行期间到达的新请求无限延迟文件操作。 */
   private async drain(): Promise<void> {
-    for (let first = this.waiting[0]; first !== undefined; first = this.waiting[0]) {
+    let batch = this.waiting.splice(0)
+    for (let first = batch[0]; first !== undefined; first = batch[0]) {
       const key = selectionKey(first.selection)
-      const group = this.waiting.filter(entry => selectionKey(entry.selection) === key)
-      this.waiting = this.waiting.filter(entry => selectionKey(entry.selection) !== key)
+      const group = batch.filter(entry => selectionKey(entry.selection) === key)
+      batch = batch.filter(entry => selectionKey(entry.selection) !== key)
       try {
         const results = await this.run(first.selection, group.map(entry => entry.inputs))
         group.forEach((entry, index) => entry.resolve(results[index] ?? []))

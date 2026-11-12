@@ -80,6 +80,31 @@ test('requests are checked and failures carry a code', async () => {
   assert.equal((await route('POST', 'models/install-dir', '', { dir: '' })).answer.error?.code, 'invalid_request')
 })
 
+test('removing the active runtime pack waits for the worker to release its files', async () => {
+  const dir = path.join(engine.home.packs, 'onnx-cpu')
+  fs.mkdirSync(dir)
+  const stopping = Promise.withResolvers<void>()
+  const exit = Promise.withResolvers<void>()
+  const local = engine.local as unknown as { worker: unknown; current: unknown }
+  local.worker = {
+    running: true,
+    async stop() {
+      stopping.resolve()
+      await exit.promise
+    },
+  }
+  local.current = { selection: { pack: 'onnx-cpu', model: 'fixture' } }
+  const removal = route('POST', 'packs/remove', '?pack=onnx-cpu')
+  await stopping.promise
+  try {
+    assert.equal(fs.existsSync(dir), true)
+  } finally {
+    exit.resolve()
+  }
+  assert.equal((await removal).answer.value, true)
+  assert.equal(fs.existsSync(dir), false)
+})
+
 test('without the account plugin cloud judging fails as not signed in', async () => {
   running = false
   try {

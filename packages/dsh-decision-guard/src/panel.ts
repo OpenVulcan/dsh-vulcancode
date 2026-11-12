@@ -11,7 +11,7 @@ import {
   DECISIONS, DecisionEngine, DecisionError, DOWNLOAD_SOURCES, MODEL_CATALOG, MODEL_FAMILIES, MODEL_SOURCES, PACK_IDS, PLANNED_PACKS,
   detectHardware, gpuGeneration, installModelFromDirectory, installPack, installedPack, isPackId, listModels,
   preferredPrecision, readLock, recommend, removeModel, removePack, downloadModel, sourcesOf,
-  AccountError, type AccountSource, type AccountStatus, type Credential, type Decision, type DecisionHome, type DownloadSource, type EngineSettings, type ModelFamily, type ModelSource,
+  AccountError, type AccountSource, type AccountStatus, type Credential, type Decision, type DecisionHome, type DownloadSource, type EngineSettings, type LocalSelection, type ModelFamily, type ModelSource,
   type EndpointSnapshot, type TestInput, type TestResult, type Verdict,
 } from '@openvulcan/vulcan-decision'
 
@@ -67,6 +67,7 @@ export interface PanelSettings {
 export class Panel {
   private job: Job | undefined
   private jobAbort: AbortController | undefined
+  private removing = false
 
   constructor(readonly engine: DecisionEngine, private readonly settings: PanelSettings, private readonly records: RecordStore) {}
 
@@ -172,12 +173,11 @@ export class Panel {
     }))
   }
 
-  removePack(pack: string | null): boolean {
+  /** Remove a pack after the worker using it has released its files.
+   *  等待使用该运行库的进程释放文件后删除运行库。 */
+  async removePack(pack: string | null): Promise<boolean> {
     if (!isPackId(pack)) throw new DecisionError('invalid_request', `pack must be one of ${PACK_IDS.join(', ')}`)
-    this.assertIdle()
-    // A running worker of this pack holds files open.
-    if (this.engine.local.status().selection?.pack === pack) this.engine.local.stop()
-    return removePack(this.home, pack)
+    return this.removeFiles(selection => selection.pack === pack, () => removePack(this.home, pack))
   }
 
   downloadModel(family: string | null, source: string | null): Job {
@@ -200,11 +200,19 @@ export class Panel {
     }))
   }
 
-  removeModel(id: string | null): boolean {
+  /** Remove a model after the worker using it has released its files.
+   *  等待使用该模型的进程释放文件后删除模型。 */
+  async removeModel(id: string | null): Promise<boolean> {
     if (id === null || id === '') throw new DecisionError('invalid_request', 'id is required')
+    return this.removeFiles(selection => selection.model === id, () => removeModel(this.home, id))
+  }
+
+  /** Prevent panel installs from interleaving with resource removal.
+   *  防止设置面板的安装与资源删除交错执行。 */
+  private async removeFiles(matches: (selection: LocalSelection) => boolean, remove: () => boolean): Promise<boolean> {
     this.assertIdle()
-    if (this.engine.local.status().selection?.model === id) this.engine.local.stop()
-    return removeModel(this.home, id)
+    this.removing = true
+    try { return await this.engine.local.changeFiles(matches, remove) } finally { this.removing = false }
   }
 
   cancelJob(): void {
@@ -267,7 +275,7 @@ export class Panel {
   }
 
   private assertIdle(): void {
-    if (this.running()) throw new DecisionError('invalid_request', 'another install is running')
+    if (this.running() || this.removing) throw new DecisionError('invalid_request', 'another runtime file operation is running')
   }
 
   private running(): boolean {
