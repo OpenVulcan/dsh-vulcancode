@@ -423,11 +423,19 @@ export class OpenVulcanAccount implements AccountSource {
     // Give an overlapping sign-out the rotated token directly without writing it back.
     // 与退出登录重叠时，直接交付轮换后的令牌用于注销，避免再次保存。
     if (this.signingOut !== undefined && this.refreshing?.credential === credential) return next
-    if (!await this.replace(pending, next)) {
-      await revoke(next)
+    try {
+      if (await this.replace(pending, next)) return next
       throw new AccountError('the OpenVulcan credential changed during refresh')
+    } catch (error) {
+      // The server has already issued the token. Storage failure also leaves it without a local owner.
+      // 服务端已签发令牌。存储操作抛出异常时，新令牌同样没有可靠的本地归属。
+      try {
+        await revoke(next)
+      } catch (revocationError) {
+        throw new AggregateError([error, revocationError], 'The refreshed OpenVulcan credential could not be saved or revoked.')
+      }
+      throw error
     }
-    return next
   }
 }
 

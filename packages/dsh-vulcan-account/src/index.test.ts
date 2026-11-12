@@ -135,6 +135,36 @@ test('routes check the site and report failures with their code', async () => {
   assert.deepEqual((await call(service, 'GET', 'state')).answer.value, { account: { signedIn: false }, signIn: null })
 })
 
+test('the rotated token is revoked even if its DSH provider is disposed before it can be saved', async t => {
+  const records = new Records()
+  const rotating = new DshCredentialStore({ credentials: records } as unknown as Context)
+  const exiting = new DshCredentialStore({ credentials: records } as unknown as Context)
+  const current = { ...CREDENTIAL, expires_at: new Date(Date.now() + 3_600_000).toISOString() }
+  const renewed = { ...CREDENTIAL, access_token: 'b'.repeat(43) }
+  const started = Promise.withResolvers<void>()
+  const reply = Promise.withResolvers<Response>()
+  const revoked: (string | null)[] = []
+  await rotating.write(current)
+  t.mock.method(globalThis, 'fetch', async (url: string, request: RequestInit) => {
+    if (url.endsWith('/token/refresh')) {
+      started.resolve()
+      return reply.promise
+    }
+    assert.match(url, /\/logout$/)
+    const authorization = new Headers(request.headers).get('Authorization')
+    revoked.push(authorization)
+    return new Response(null, { status: authorization === `Auth ${renewed.access_token}` ? 204 : 401 })
+  })
+  const rotation = new OpenVulcanAccount(rotating, deviceInfo('test')).credential()
+  await started.promise
+  await new OpenVulcanAccount(exiting, deviceInfo('test')).signOut()
+  t.mock.method(rotating, 'replace', async () => { throw new Error('DSH credential provider was disposed') })
+  reply.resolve(Response.json({ ...renewed, token_type: 'Auth' }))
+  await assert.rejects(rotation, /provider was disposed/)
+  assert.equal(await exiting.read(), undefined)
+  assert.deepEqual(revoked, [`Auth ${current.access_token}`, `Auth ${renewed.access_token}`])
+})
+
 test('names the sign-in client dsh at its exact version', () => {
   assert.deepEqual(deviceInfo('0.2.1-rc.2'), { display_name: 'dsh', client_version: '0.2.1-rc.2' })
 })
