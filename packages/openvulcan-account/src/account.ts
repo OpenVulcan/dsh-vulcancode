@@ -276,7 +276,13 @@ export class OpenVulcanAccount implements AccountSource {
         }
         const write = this.store.write(credential)
         this.signInWrites.add(write)
-        try { await write } finally { this.signInWrites.delete(write) }
+        try {
+          await write
+        } catch (error) {
+          await revokeAfterPersistenceFailure(credential, error)
+        } finally {
+          this.signInWrites.delete(write)
+        }
         this.assertCurrent(generation)
         const status = await this.status()
         this.assertCurrent(generation)
@@ -435,14 +441,20 @@ export class OpenVulcanAccount implements AccountSource {
     } catch (error) {
       // The server has already issued the token. Storage failure also leaves it without a local owner.
       // 服务端已签发令牌。存储操作抛出异常时，新令牌同样没有可靠的本地归属。
-      try {
-        await revoke(next)
-      } catch (revocationError) {
-        throw new AggregateError([error, revocationError], 'The refreshed OpenVulcan credential could not be saved or revoked.')
-      }
-      throw error
+      return await revokeAfterPersistenceFailure(next, error)
     }
   }
+}
+
+/** Revoke an issued token that could not be stored, then propagate both failures if needed.
+ *  注销无法保存的已签发令牌。若注销也失败，同时保留两个异常。 */
+async function revokeAfterPersistenceFailure(credential: Credential, error: unknown): Promise<never> {
+  try {
+    await revoke(credential)
+  } catch (revocationError) {
+    throw new AggregateError([error, revocationError], 'The OpenVulcan credential could not be saved or revoked.')
+  }
+  throw error
 }
 
 async function revoke(credential: Credential): Promise<void> {
