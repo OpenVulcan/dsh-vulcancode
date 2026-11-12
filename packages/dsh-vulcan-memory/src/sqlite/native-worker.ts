@@ -44,6 +44,7 @@ function query(request: VectorRequest): z.infer<typeof vectorHits> {
   const closeEngine = dll.func('void vldb_lancedb_engine_destroy(void *)')
   const createTable = dll.func('void *vldb_lancedb_engine_create_table_json(void *, const char *)')
   const upsert = dll.func('void *vldb_lancedb_engine_vector_upsert(void *, const char *, const uint8_t *, size_t)')
+  const remove = dll.func('void *vldb_lancedb_engine_delete_json(void *, const char *)')
   const search = dll.func('void *vldb_lancedb_engine_vector_search(void *, const char *, _Out_ ByteBuffer *)')
   const freeString = dll.func('void vldb_lancedb_string_free(void *)')
   const freeBytes = dll.func('void vldb_lancedb_bytes_free(ByteBuffer)')
@@ -62,7 +63,7 @@ function query(request: VectorRequest): z.infer<typeof vectorHits> {
   // 跨 dsh 进程串行化原生库写入，建表成功后才发布元数据。
   const db = new DatabaseSync(path.join(root, 'vector-meta.sqlite3'))
   try {
-    db.exec('PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS models (id TEXT PRIMARY KEY); BEGIN IMMEDIATE')
+    db.exec('PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS managed_models (id TEXT PRIMARY KEY); BEGIN IMMEDIATE')
     const runtime = openRuntime({ ...defaultOptions(), default_db_path: path.join(root, 'vectors'),
       has_read_consistency_interval: 1, read_consistency_interval_ms: 0 })
     if (runtime === null) throw new Error(lastError())
@@ -70,27 +71,58 @@ function query(request: VectorRequest): z.infer<typeof vectorHits> {
       const engine = openEngine(runtime)
       if (engine === null) throw new Error(lastError())
       try {
-        if (db.prepare('SELECT id FROM models WHERE id=?').get(model) === undefined) {
-          check(createTable(engine, JSON.stringify({ table_name: table, overwrite_if_exists: true, columns: [
-            { name: 'id', column_type: 'string' }, { name: 'revision', column_type: 'string' },
-            { name: 'scopeKey', column_type: 'string' }, { name: 'embedding', column_type: 'vector_float32', vector_dim: vector.length },
-          ] })))
-          db.prepare('INSERT INTO models VALUES (?)').run(model)
-          // Commit table creation before any upsert can succeed and be recorded by the caller.
-          // 在允许写入成功并由调用方标记前，先提交建表记录。
-          db.exec('COMMIT; BEGIN IMMEDIATE')
-        }
-        if (entries.length !== 0) {
-          const records = new DatabaseSync(path.join(root, 'memory.sqlite3'), { readOnly: true })
-          try {
-            const current = records.prepare('SELECT 1 FROM records WHERE id=? AND revision=?')
-            const rows = entries.filter(entry => current.get(entry.id, entry.revision) !== undefined)
+        const records = new DatabaseSync(path.join(root, 'memory.sqlite3'))
+        try {
+          records.exec('PRAGMA busy_timeout=5000')
+          if (db.prepare('SELECT id FROM managed_models WHERE id=?').get(model) === undefined) {
+            // Preview tables have no deletion ledger. Replace only their derived vector cache once.
+            // 预览版向量表没有清理登记，仅一次性重建其派生向量缓存。
+            check(createTable(engine, JSON.stringify({ table_name: table, overwrite_if_exists: true, columns: [
+              { name: 'id', column_type: 'string' }, { name: 'revision', column_type: 'string' },
+              { name: 'scopeKey', column_type: 'string' }, { name: 'embedding', column_type: 'vector_float32', vector_dim: vector.length },
+            ] })))
+            records.prepare('DELETE FROM indexed WHERE model=?').run(model)
+            records.prepare('DELETE FROM vector_candidates WHERE model=?').run(model)
+            db.prepare('INSERT INTO managed_models VALUES (?)').run(model)
+            // Commit table creation before any upsert can succeed and be recorded by the caller.
+            // 在允许写入成功并由调用方标记前，先提交建表记录。
+            db.exec('COMMIT; BEGIN IMMEDIATE')
+          }
+          if (entries.length !== 0) {
+            // Record each candidate before crossing FFI so an interrupted upsert can still be cleaned up.
+            // 在调用 FFI 前登记每个候选项，确保写入中断后仍可清理。
+            const register = records.prepare(`
+              INSERT OR IGNORE INTO vector_candidates
+              SELECT ?,id,revision FROM records WHERE id=? AND revision=?
+              RETURNING id
+            `)
+            const candidate = records.prepare(`
+              SELECT 1 FROM vector_candidates AS candidate JOIN records USING (id,revision)
+              WHERE candidate.model=? AND candidate.id=? AND candidate.revision=?
+            `)
+            const rows = entries.filter(entry => register.get(model, entry.id, entry.revision) !== undefined
+              || candidate.get(model, entry.id, entry.revision) !== undefined)
             if (rows.length !== 0) {
               const bytes = Buffer.from(JSON.stringify(rows))
               check(upsert(engine, JSON.stringify({ table_name: table, input_format: 'json', key_columns: ['id'] }), bytes, bytes.length))
             }
-          } finally { records.close() }
-        }
+          }
+          // Remove stale revisions before ranking. Delete by id and revision so a newer upsert survives.
+          // 排序前删除失效版本。以标识和版本为条件删除，保留更新后的向量。
+          const obsolete = records.prepare(`
+            SELECT candidate.id,candidate.revision FROM vector_candidates AS candidate
+            LEFT JOIN records USING(id,revision)
+            WHERE candidate.model=? AND records.id IS NULL LIMIT 128
+          `)
+          const forget = records.prepare('DELETE FROM vector_candidates WHERE model=? AND id=? AND revision=?')
+          for (;;) {
+            const stale = vectorHits.parse(obsolete.all(model))
+            if (stale.length === 0) break
+            const condition = stale.map(({ id, revision }) => `(id = '${id}' AND revision = '${revision}')`).join(' OR ')
+            check(remove(engine, JSON.stringify({ table_name: table, condition })))
+            for (const { id, revision } of stale) forget.run(model, id, revision)
+          }
+        } finally { records.close() }
         const out: { data?: bigint; len?: number } = {}
         check(search(engine, JSON.stringify({ table_name: table, vector, vector_column: 'embedding', output_format: 'json',
           limit: 24, filter: `scopeKey IN ('user','space','${project}')` }), out))

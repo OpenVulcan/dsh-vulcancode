@@ -71,6 +71,9 @@ export class SqliteStore {
         CREATE TABLE IF NOT EXISTS indexed (
           model TEXT NOT NULL, id TEXT NOT NULL, revision TEXT NOT NULL, PRIMARY KEY(model,id)
         );
+        CREATE TABLE IF NOT EXISTS vector_candidates (
+          model TEXT NOT NULL, id TEXT NOT NULL, revision TEXT NOT NULL, PRIMARY KEY(model,id,revision)
+        );
       `)
       return new SqliteStore(db, (value) => jieba.cutForSearch(value.normalize('NFKC').toLowerCase(), true)
         .flatMap(token => token.match(/[\p{L}\p{N}]+/gu) ?? []))
@@ -133,6 +136,8 @@ export class SqliteStore {
         this.db.prepare('DELETE FROM records_fts WHERE id=?').run(edit.id)
         if (edit.action === 'remove') {
           this.db.prepare('DELETE FROM records WHERE id=?').run(edit.id)
+          // Keep vector candidates so the native process can remove obsolete rows after a restart.
+          // 保留向量候选登记，供原生进程重启后清理失效行。
           this.db.prepare('DELETE FROM indexed WHERE id=?').run(edit.id)
         } else if (before !== undefined) {
           after = { ...before, title: edit.title, body: edit.body, revision: randomUUID(), updated: Date.now() }
@@ -172,6 +177,8 @@ export class SqliteStore {
     return this.db.prepare(`
       SELECT records.* FROM records LEFT JOIN indexed
       ON records.id=indexed.id AND indexed.model=? AND records.revision=indexed.revision
+      AND EXISTS (SELECT 1 FROM vector_candidates AS candidate
+        WHERE candidate.model=indexed.model AND candidate.id=indexed.id AND candidate.revision=indexed.revision)
       WHERE ${SCOPE} AND records.kind='memory' AND indexed.id IS NULL ORDER BY records.updated,records.id LIMIT 10
     `).all(model, project) as unknown as RecordEntry[]
   }

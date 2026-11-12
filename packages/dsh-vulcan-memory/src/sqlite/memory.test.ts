@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { test } from 'node:test'
 import type { Credential } from '@openvulcan/openvulcan-account'
 import { SqliteStore } from './store.js'
@@ -33,6 +34,29 @@ test('Jieba search and SQLite edits share a project-scoped revision boundary', a
     store.write(projectA, { action: 'remove', id: updated.id, revision: updated.revision })
     assert.deepEqual(store.search(projectA, '校验', 10), [])
   } finally {
+    store.close()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('vector cleanup retains candidates for deleted records and rebuilds preview indexes', async () => {
+  // Open the authoritative store and use a second connection as the vector worker would.
+  // 打开权威存储，再像向量进程一样建立第二个连接。
+  const root = await mkdtemp(path.join(tmpdir(), 'dsh-sqlite-vector-ledger-'))
+  const store = await SqliteStore.open(root)
+  const db = new DatabaseSync(path.join(root, 'memory.sqlite3'))
+  try {
+    const entry = store.write(projectA, { action: 'add', kind: 'memory', scope: 'project', title: 'Index test', body: 'Fixture' })
+    assert.ok(entry)
+    store.acknowledge('model', [entry])
+    assert.deepEqual(store.pending(projectA, 'model').map(record => record.id), [entry.id])
+    db.prepare('INSERT INTO vector_candidates VALUES (?,?,?)').run('model', entry.id, entry.revision)
+    assert.deepEqual(store.pending(projectA, 'model'), [])
+    store.write(projectA, { action: 'remove', id: entry.id, revision: entry.revision })
+    assert.equal(db.prepare('SELECT revision FROM vector_candidates WHERE id=?').get(entry.id)?.revision, entry.revision)
+    assert.equal(db.prepare('SELECT revision FROM indexed WHERE id=?').get(entry.id), undefined)
+  } finally {
+    db.close()
     store.close()
     await rm(root, { recursive: true, force: true })
   }
