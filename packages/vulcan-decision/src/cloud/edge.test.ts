@@ -143,6 +143,9 @@ test('judge answers must match the request, the checkpoint form and the policy',
   for (const bad of [{ request_id: 'r2' }, { checkpoint_sha256: 'x' }, { policy_version: 'other' }, { results: [] }, { results: [{ label: 'maybe' }] }]) {
     assert.throws(() => parseJudgeAnswer(answer(bad), 'r1', 1), (error: unknown) => error instanceof DecisionError && error.code === 'model_failed')
   }
+  for (const malformed of ['null', answer({ results: [null] })]) {
+    assert.throws(() => parseJudgeAnswer(malformed, 'r1', 1), { code: 'model_failed' })
+  }
 })
 
 test('endpoint origins are bare https origins or loopback http', () => {

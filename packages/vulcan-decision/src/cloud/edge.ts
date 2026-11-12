@@ -654,7 +654,8 @@ export function parseJudgeAnswer(text: string, requestId: string, count: number)
   return parseJudgeEnvelope(text, requestId, count).results as ModelResult[]
 }
 
-/** {@link parseJudgeAnswer} with the answer's region, model and checkpoint. */
+/** Validate the response envelope and return the judgement with its deployment metadata.
+ *  校验响应封装，并返回判定结果及其部署元数据。 */
 export function parseJudgeEnvelope(text: string, requestId: string, count: number): JudgeAnswer {
   const fail = (what: string) => new DecisionError('model_failed', `the endpoint answered ${what}`)
   let answer: { request_id?: unknown; region?: unknown; model?: unknown; checkpoint_sha256?: unknown; policy_version?: unknown; results?: unknown }
@@ -663,11 +664,13 @@ export function parseJudgeEnvelope(text: string, requestId: string, count: numbe
   } catch {
     throw fail('invalid JSON')
   }
+  if (typeof answer !== 'object' || answer === null || Array.isArray(answer)) throw fail('an invalid envelope')
   if (answer.request_id !== requestId) throw fail('another request id')
   if (typeof answer.checkpoint_sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(answer.checkpoint_sha256)) throw fail('no checkpoint')
   if (answer.policy_version !== POLICY_VERSION) throw fail(`policy ${String(answer.policy_version)}`)
   if (!Array.isArray(answer.results) || answer.results.length !== count) throw fail('the wrong number of results')
   const results = answer.results.map((item: { label?: unknown; logits?: unknown; input_tokens?: unknown; model_evaluated?: unknown; reason_code?: unknown }) => {
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) throw fail('an invalid result')
     if (!(DECISIONS as readonly unknown[]).includes(item.label)) throw fail('no decision')
     const logits = Array.isArray(item.logits) && item.logits.length === 3 && item.logits.every(Number.isFinite) ? item.logits as number[] : undefined
     return {
