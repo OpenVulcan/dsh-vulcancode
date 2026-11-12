@@ -57,6 +57,9 @@ export interface CredentialStore {
   read(): Promise<Credential | undefined>
   write(credential: Credential): Promise<void>
   delete(): Promise<void>
+  /** Replace an exact record while holding the host's storage lock, when supported.
+   *  宿主支持时，在持有存储锁的情况下替换完全匹配的记录。 */
+  replace?(expected: Credential, next: Credential): Promise<boolean>
 }
 
 /** An owner-only JSON file, for the command line. */
@@ -165,10 +168,22 @@ function sameCredential(left: Credential, right: Credential): boolean {
     && left.expires_at === right.expires_at
 }
 
+/** Match a persisted credential including its rotation marker.
+ *  比较持久化凭据，包含轮换标记。 */
+export function matchesStoredCredential(current: Credential | undefined, expected: Credential): boolean {
+  return current !== undefined && sameCredential(current, expected)
+    && (current.rotation_pending === true) === (expected.rotation_pending === true)
+}
+
 export class OpenVulcanAccount implements AccountSource {
   // Track live work separately from the durable crash-recovery marker.
   // 将正在进行的刷新与持久化的崩溃恢复标记分开记录。
   private refreshing: ActiveRefresh | undefined
+  // A sign-out fences outstanding callers immediately and waits for any credential writes it supersedes.
+  // 退出登录立即隔离进行中的调用，并等待它所取代的凭据写入。
+  private signOutGeneration = 0
+  private signingOut: Promise<void> | undefined
+  private readonly signInWrites = new Set<Promise<void>>()
 
   constructor(
     private readonly store: CredentialStore,
@@ -178,8 +193,10 @@ export class OpenVulcanAccount implements AccountSource {
   ) {}
 
   async status(): Promise<AccountStatus> {
+    const generation = this.signOutGeneration
+    if (this.signingOut !== undefined) return { signedIn: false }
     const credential = await this.store.read()
-    if (credential === undefined) return { signedIn: false }
+    if (credential === undefined || !this.isCurrent(generation)) return { signedIn: false }
     const interrupted = credential.rotation_pending === true && this.refreshFor(credential) === undefined
     return {
       signedIn: !interrupted && (this.refreshFor(credential) !== undefined || Date.parse(credential.expires_at) > Date.now()),
@@ -192,6 +209,8 @@ export class OpenVulcanAccount implements AccountSource {
 
   /** Begin signing in to `site`. */
   async signIn(site: Site): Promise<PendingSignIn> {
+    const generation = this.signOutGeneration
+    this.assertCurrent(generation)
     const origin = this.authOrigin ?? SITES[site].auth
     const state = base64url(randomBytes(32))
     const verifier = base64url(randomBytes(32))
@@ -234,6 +253,7 @@ export class OpenVulcanAccount implements AccountSource {
         },
       }) as typeof begin
       checkApprovalUrl(begin.approval_url, origin, state)
+      this.assertCurrent(generation)
     } catch (error) {
       close()
       throw error
@@ -247,11 +267,14 @@ export class OpenVulcanAccount implements AccountSource {
         const code = await callback
         const answer = await postJson(`${origin}/api/v1/vulcancode/token`, undefined, { code, code_verifier: verifier })
         const credential = tokenAnswer(answer, site, origin)
-        if (cancelled) {
+        if (cancelled || !this.isCurrent(generation)) {
           await revoke(credential)
           throw new AccountError('the sign-in was cancelled')
         }
-        await this.store.write(credential)
+        const write = this.store.write(credential)
+        this.signInWrites.add(write)
+        try { await write } finally { this.signInWrites.delete(write) }
+        this.assertCurrent(generation)
         return await this.status()
       } finally {
         clearTimeout(timeout)
@@ -293,9 +316,22 @@ export class OpenVulcanAccount implements AccountSource {
 
   /** Revoke the credential on the server and forget it here. */
   async signOut(): Promise<void> {
-    const credential = await this.store.read()
-    await this.store.delete()
-    if (credential !== undefined) await revoke(credential)
+    if (this.signingOut === undefined) {
+      this.signOutGeneration++
+      const writes = [...this.signInWrites]
+      const rotation = this.refreshing
+      this.signingOut = (async () => {
+        // The old token may already be invalid. Revoke the token returned by the completed rotation.
+        // 旧令牌可能已失效，因此等待轮换结束后注销其返回的新令牌。
+        const [rotated] = await Promise.all([rotation?.result.catch(() => undefined), Promise.allSettled(writes)])
+        const stored = await this.store.read()
+        await this.store.delete()
+        if (rotated !== undefined) await revoke(rotated)
+        if (stored !== undefined && (rotated === undefined || stored.authorization_id !== rotated.authorization_id
+          || stored.auth_origin !== rotated.auth_origin)) await revoke(stored)
+      })().finally(() => { this.signingOut = undefined })
+    }
+    await this.signingOut
   }
 
   /**
@@ -303,10 +339,13 @@ export class OpenVulcanAccount implements AccountSource {
    * @throws AccountError when there is none or it can no longer be trusted.
    */
   async credential(): Promise<Credential> {
+    const generation = this.signOutGeneration
+    this.assertCurrent(generation)
     const credential = await this.store.read()
+    this.assertCurrent(generation)
     if (credential === undefined) throw new AccountError('not signed in to OpenVulcan')
     const active = this.refreshFor(credential)
-    if (active !== undefined) return await active.result
+    if (active !== undefined) return await this.awaitCredential(active.result, generation)
     if (credential.rotation_pending === true) throw new AccountError('a credential rotation was interrupted; sign in to OpenVulcan again')
     const remaining = Date.parse(credential.expires_at) - Date.now()
     if (remaining <= 0) throw new AccountError('the OpenVulcan sign-in expired; sign in again')
@@ -315,7 +354,7 @@ export class OpenVulcanAccount implements AccountSource {
       if (this.refreshing?.result === result) this.refreshing = undefined
     })
     this.refreshing = { credential, result }
-    return await result
+    return await this.awaitCredential(result, generation)
   }
 
   /** Return the live rotation only if it belongs to the credential just read.
@@ -324,22 +363,59 @@ export class OpenVulcanAccount implements AccountSource {
     return this.refreshing !== undefined && sameCredential(this.refreshing.credential, credential) ? this.refreshing : undefined
   }
 
+  /** Check whether an operation still belongs to the current sign-out generation.
+   *  检查操作是否仍属于当前的退出登录代次。 */
+  private isCurrent(generation: number): boolean {
+    return this.signingOut === undefined && generation === this.signOutGeneration
+  }
+
+  /** Refuse credential delivery after sign-out has superseded the operation.
+   *  退出登录取代操作后，拒绝交付凭据。 */
+  private assertCurrent(generation: number): void {
+    if (!this.isCurrent(generation)) throw new AccountError('the OpenVulcan account is signing out or has signed out')
+  }
+
+  /** Wait for rotation, then recheck whether the caller may still receive the token.
+   *  等待轮换，然后复查调用方是否仍可获得令牌。 */
+  private async awaitCredential(result: Promise<Credential>, generation: number): Promise<Credential> {
+    const credential = await result
+    this.assertCurrent(generation)
+    return credential
+  }
+
+  /** Update the expected credential, using the host's atomic comparison where available.
+   *  更新预期凭据，在宿主支持时使用原子比较。 */
+  private async replace(expected: Credential, next: Credential): Promise<boolean> {
+    if (this.store.replace !== undefined) return this.store.replace(expected, next)
+    if (!matchesStoredCredential(await this.store.read(), expected)) return false
+    await this.store.write(next)
+    return true
+  }
+
   private async refresh(credential: Credential): Promise<Credential> {
-    await this.store.write({ ...credential, rotation_pending: true })
+    const pending = { ...credential, rotation_pending: true }
+    if (!await this.replace(credential, pending)) throw new AccountError('the OpenVulcan credential changed before refresh')
     let answer: unknown
     try {
       answer = await postJson(`${credential.auth_origin}/api/v1/vulcancode/token/refresh`, credential.access_token, {})
     } catch (error) {
       // A refusal means the credential is gone; anything else leaves the rotation pending.
-      if (error instanceof HttpError && (error.status === 401 || error.status === 403)) await this.store.delete()
+      if (error instanceof HttpError && (error.status === 401 || error.status === 403)
+        && matchesStoredCredential(await this.store.read(), pending)) await this.store.delete()
       throw new AccountError(`refreshing the OpenVulcan sign-in failed: ${(error as Error).message}`)
     }
     const next = tokenAnswer(answer, credential.site, credential.auth_origin)
     if (next.authorization_id !== credential.authorization_id) {
-      await this.store.delete()
+      if (matchesStoredCredential(await this.store.read(), pending)) await this.store.delete()
       throw new AccountError('the refreshed credential belongs to another device authorization')
     }
-    await this.store.write(next)
+    // Give an overlapping sign-out the rotated token directly without writing it back.
+    // 与退出登录重叠时，直接交付轮换后的令牌用于注销，避免再次保存。
+    if (this.signingOut !== undefined && this.refreshing?.credential === credential) return next
+    if (!await this.replace(pending, next)) {
+      await revoke(next)
+      throw new AccountError('the OpenVulcan credential changed during refresh')
+    }
     return next
   }
 }

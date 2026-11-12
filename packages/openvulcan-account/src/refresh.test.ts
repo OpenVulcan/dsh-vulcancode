@@ -41,3 +41,53 @@ test('parallel credential reads join a live rotation and keep the signed-in stat
   assert.deepEqual(await Promise.all([first, second]), [refreshed, refreshed])
   assert.equal(transport.mock.callCount(), 1)
 })
+
+test('sign-out waits for rotation and revokes its new token without handing it to the caller', async (t) => {
+  const { account, store } = fixture()
+  const requested = Promise.withResolvers<void>()
+  const response = Promise.withResolvers<Response>()
+  const revoked: Array<string | null> = []
+  t.mock.method(globalThis, 'fetch', async (url: string, request: RequestInit) => {
+    if (url.endsWith('/token/refresh')) {
+      requested.resolve()
+      return response.promise
+    }
+    assert.match(url, /\/logout$/)
+    const authorization = new Headers(request.headers).get('Authorization')
+    revoked.push(authorization)
+    return new Response(null, { status: authorization === `Auth ${refreshed.access_token}` ? 204 : 401 })
+  })
+  const rotation = account.credential()
+  await requested.promise
+  const signOut = account.signOut()
+  assert.deepEqual(await account.status(), { signedIn: false })
+  await assert.rejects(account.credential(), /signing out/)
+  const caller = assert.rejects(rotation, /signing out|signed out/)
+  response.resolve(Response.json({ ...refreshed, token_type: 'Auth' }))
+  await Promise.all([signOut, caller])
+  assert.equal(await store.read(), undefined)
+  assert.deepEqual(revoked, [`Auth ${refreshed.access_token}`])
+})
+
+test('late rotation does not restore a record removed by another host', async (t) => {
+  const { account, store } = fixture()
+  const requested = Promise.withResolvers<void>()
+  const response = Promise.withResolvers<Response>()
+  const revoked: Array<string | null> = []
+  t.mock.method(globalThis, 'fetch', async (url: string, request: RequestInit) => {
+    if (url.endsWith('/token/refresh')) {
+      requested.resolve()
+      return response.promise
+    }
+    assert.match(url, /\/logout$/)
+    revoked.push(new Headers(request.headers).get('Authorization'))
+    return new Response(null, { status: 204 })
+  })
+  const rotation = account.credential()
+  await requested.promise
+  await store.delete()
+  response.resolve(Response.json({ ...refreshed, token_type: 'Auth' }))
+  await assert.rejects(rotation, /changed during refresh/)
+  assert.equal(await store.read(), undefined)
+  assert.deepEqual(revoked, [`Auth ${refreshed.access_token}`])
+})

@@ -10,7 +10,7 @@ import { getDshRuntimeVersion } from '@deepseek-ai/dsh-app-boot'
 import type {} from '@deepseek-ai/dsh-client-connection'
 import { credentialKey } from '@deepseek-ai/dsh-credentials'
 import {
-  AccountError, isSite, OpenVulcanAccount, parseCredential,
+  AccountError, isSite, matchesStoredCredential, OpenVulcanAccount, parseCredential,
   type AccountProfile, type AccountSource, type AccountStatus, type Credential, type CredentialStore, type PendingSignIn, type Site,
 } from '@openvulcan/openvulcan-account'
 
@@ -60,6 +60,18 @@ export class DshCredentialStore implements CredentialStore {
 
   async write(credential: Credential): Promise<void> {
     await this.ctx.credentials.modifyRecord(CREDENTIAL_KEY, async () => ({ kind: 'grant', payload: credential }))
+  }
+
+  /** Replace only the matching credential inside the DSH credential document's lock.
+   *  在 DSH 凭据文档锁内仅替换匹配的凭据。 */
+  async replace(expected: Credential, next: Credential): Promise<boolean> {
+    let replaced = false
+    await this.ctx.credentials.modifyRecord(CREDENTIAL_KEY, async record => {
+      if (record?.kind !== 'grant' || !matchesStoredCredential(parseCredential(record.payload), expected)) return undefined
+      replaced = true
+      return { kind: 'grant', payload: next }
+    })
+    return replaced
   }
 
   async delete(): Promise<void> {

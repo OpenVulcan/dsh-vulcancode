@@ -37,7 +37,14 @@ test('keeps the credential as one grant record under the shared key', async () =
   assert.equal(CREDENTIAL_KEY, 'openvulcan/account')
   assert.equal(records.values.get(CREDENTIAL_KEY)?.kind, 'grant')
   assert.deepEqual(await store.read(), CREDENTIAL)
+  // Replace only the exact version still held by the locked credential store.
+  // 仅替换加锁凭据存储仍持有的准确版本。
+  const pending = { ...CREDENTIAL, rotation_pending: true }
+  assert.equal(await store.replace(CREDENTIAL, pending), true)
+  assert.equal(await store.replace(CREDENTIAL, { ...CREDENTIAL, access_token: 'b'.repeat(43) }), false)
+  assert.deepEqual(await store.read(), pending)
   await store.delete()
+  assert.equal(await store.replace(pending, CREDENTIAL), false)
   assert.equal(await store.read(), undefined)
 })
 
