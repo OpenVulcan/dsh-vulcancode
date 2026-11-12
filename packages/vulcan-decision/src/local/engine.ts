@@ -93,9 +93,13 @@ export class LocalEngine {
     })
   }
 
-  /** Load `selection` ahead of the first judgement. */
+  /** Load the selected worker and start its idle period after loading completes.
+   *  加载所选进程，并在加载完成后开始计算空闲时间。 */
   async warm(selection: LocalSelection): Promise<LoadResult> {
-    const run = this.queue.then(() => this.ensure(selection))
+    const run = this.queue.then(async () => {
+      clearTimeout(this.idleTimer)
+      try { return await this.ensure(selection) } finally { this.armIdle() }
+    })
     this.queue = run.catch(() => {})
     return await run
   }
@@ -122,12 +126,14 @@ export class LocalEngine {
     }
   }
 
-  /** Judge several callers' inputs with `selection` in merged requests; answers per caller. */
+  /** Judge merged inputs without an idle timer running, and return one result list per caller.
+   *  在空闲计时器停用时处理合并输入，并按调用者返回结果。 */
   private async run(selection: LocalSelection, groups: readonly (readonly JudgeInput[])[]): Promise<ModelResult[][]> {
-    const loaded = await this.ensure(selection)
-    const worker = this.worker
-    if (worker === undefined) throw new DecisionError('backend_unavailable', 'the local model process is not running')
+    clearTimeout(this.idleTimer)
     try {
+      const loaded = await this.ensure(selection)
+      const worker = this.worker
+      if (worker === undefined) throw new DecisionError('backend_unavailable', 'the local model process is not running')
       const flat = groups.flat()
       const results: ModelResult[] = []
       for (const request of mergeRequests(flat, loaded.limits?.max_request_items)) {
@@ -168,8 +174,11 @@ export class LocalEngine {
     }
   }
 
+  /** Schedule cleanup only for a live worker with no judgement or load in progress.
+   *  仅在进程仍存活且没有判定或加载操作时安排空闲清理。 */
   private armIdle(): void {
     clearTimeout(this.idleTimer)
+    if (this.worker?.running !== true) return
     this.idleTimer = setTimeout(() => this.stop(), this.idleMs)
     this.idleTimer.unref()
   }
