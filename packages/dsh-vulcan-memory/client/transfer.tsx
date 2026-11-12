@@ -136,7 +136,6 @@ function ImportDialog({ t, open, close, onImported }: { t: Translate; open: Open
   // are only listed first as hints; nothing is preselected.
   const [targets, setTargets] = useState<Record<string, string>>(() => Object.fromEntries(initial.projects.map(entry => [entry.project.id, ''])))
   const [review, setReview] = useState<ImportPreview | undefined>(hasProjects ? undefined : initial)
-  const [choices, setChoices] = useState<Record<string, ConflictChoice>>(() => (hasProjects ? {} : defaultChoices(initial)))
   const [report, setReport] = useState<ImportReport | undefined>(undefined)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | undefined>(undefined)
@@ -154,21 +153,18 @@ function ImportDialog({ t, open, close, onImported }: { t: Translate; open: Open
     setError(undefined)
     task().catch((failure: unknown) => { setError(messageOf(failure)) }).finally(() => { setBusy(false) })
   }
-  const toReview = () => { run(async () => {
-    const next = await callHost<ImportPreview>('POST', 'import/preview', { archive, name, projects: mappings() })
-    setChoices(defaultChoices(next))
+  /** Restage the entire import when an earlier choice can change later comparisons.
+   *  当较早的选择可能影响后续比较时，重新暂存整个导入。 */
+  const refreshReview = (resolutions = importResolutions(review)) => { run(async () => {
+    const next = await callHost<ImportPreview>('POST', 'import/preview', { archive, name, projects: mappings(), resolutions })
     setReview(next)
   }) }
+  const toReview = () => { refreshReview() }
   const apply = () => { run(async () => {
     if (review === undefined) return
-    const resolutions = review.scopes.flatMap(scope => scope.conflicts.map(conflict => ({
-      scope: scope.scope,
-      ...scope.packageProjectId === null ? {} : { packageProjectId: scope.packageProjectId },
-      nodeId: conflict.id,
-      choice: choices[conflictKey(scope, conflict)] ?? 'keep_local',
-    })))
     setReport(await callHost<ImportReport>('POST', 'import', {
-      archive, name, expectedSha256: review.sha256, expectedLocalRevision: review.localRevision, projects: mappings(), resolutions,
+      archive, name, expectedSha256: review.sha256, expectedLocalRevision: review.localRevision, projects: mappings(),
+      resolutions: importResolutions(review),
     }))
     onImported()
   }) }
@@ -243,7 +239,7 @@ function ImportDialog({ t, open, close, onImported }: { t: Translate; open: Open
         {review.scopes.map(scope => (
           <div key={`${scope.scope}:${scope.packageProjectId ?? ''}`} className="vmm-import-scope">
             <h4>{scope.scope === 'project' ? fill(t('transfer.projectScope'), { name: projectName(scope.packageProjectId) }) : t(`nav.${scope.scope}` as Key)}</h4>
-            <p className="vac-hint">{fill(t('transfer.counts'), { same: scope.same, added: scope.added.length, conflicts: scope.conflicts.length })}</p>
+            <p className="vac-hint">{fill(t('transfer.counts'), { same: scope.same, added: scope.added.length + scope.keptBoth, conflicts: scope.conflicts.length })}</p>
             {scope.newSections.length === 0 ? null : <p className="vac-hint">{fill(t('transfer.newSections'), { titles: scope.newSections.join(', ') })}</p>}
             {scope.duplicates.length === 0 ? null : (
               <p className="vac-hint">{fill(t('transfer.duplicates'), { titles: scope.duplicates.map(node => node.path.join(' › ')).join(', ') })}</p>
@@ -258,8 +254,8 @@ function ImportDialog({ t, open, close, onImported }: { t: Translate; open: Open
                       <span className="vac-badge info">{t(conflict.newer === 'imported' ? 'transfer.newerImported' : 'transfer.newerLocal')}</span>
                     )}
                   </span>
-                  <Segments value={choices[key] ?? 'keep_local'} label={conflict.path.join(' › ')} disabled={busy}
-                    onChange={(value) => { setChoices({ ...choices, [key]: value }) }}
+                  <Segments value={conflict.choice} label={conflict.path.join(' › ')} disabled={busy}
+                    onChange={(value) => { refreshReview(importResolutions(review, { key, choice: value })) }}
                     options={CHOICES.map(value => ({ value, label: t(`transfer.choice.${value}` as Key) }))} />
                   <details>
                     <summary className="vac-hint">{t('transfer.compare')}</summary>
@@ -309,10 +305,15 @@ function conflictKey(scope: ScopeMergePreview, conflict: NodeConflict): string {
   return `${scope.scope}:${scope.packageProjectId ?? ''}:${conflict.id}`
 }
 
-/** Every conflict starts at its newer side, keeping the local note when unknown. */
-function defaultChoices(preview: ImportPreview): Record<string, ConflictChoice> {
-  return Object.fromEntries(preview.scopes.flatMap(scope => scope.conflicts.map(conflict => [
-    conflictKey(scope, conflict),
-    conflict.newer === 'imported' ? 'take_imported' : 'keep_local',
-  ])))
+/** Send only the displayed choices and their revisions, optionally editing one of them.
+ *  仅提交当前显示的选择及其修订值，并允许修改其中一个选择。 */
+function importResolutions(preview: ImportPreview | undefined, edit?: { key: string; choice: ConflictChoice }) {
+  if (preview === undefined) return []
+  return preview.scopes.flatMap(scope => scope.conflicts.map(conflict => ({
+    scope: scope.scope,
+    ...scope.packageProjectId === null ? {} : { packageProjectId: scope.packageProjectId },
+    nodeId: conflict.id,
+    revision: conflict.revision,
+    choice: edit !== undefined && edit.key === conflictKey(scope, conflict) ? edit.choice : conflict.choice,
+  })))
 }

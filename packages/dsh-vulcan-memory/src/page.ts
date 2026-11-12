@@ -295,9 +295,11 @@ export function exportRequest(store: MarkdownMemoryStore, value: unknown): { fil
   return { fileName: exported.fileName, archive: Buffer.from(exported.bytes).toString('base64'), sha256: exported.sha256 }
 }
 
+/** Preview the requested mappings, reusing choices whose conflict revisions still match.
+ *  预览请求中的项目映射，并沿用冲突修订值仍匹配的选择。 */
 export function previewRequest(store: MarkdownMemoryStore, value: unknown): ImportPreview {
-  const input = fields(value, ['archive', 'name', 'projects'])
-  return previewImport(store, archiveBytes(input), text(input, 'name'), parseMappings(input['projects']))
+  const input = fields(value, ['archive', 'name', 'projects', 'resolutions'])
+  return previewImport(store, archiveBytes(input), text(input, 'name'), parseMappings(input['projects']), parseResolutions(input['resolutions']))
 }
 
 /** Apply the archive, mappings and resolutions against the revision confirmed by the browser.

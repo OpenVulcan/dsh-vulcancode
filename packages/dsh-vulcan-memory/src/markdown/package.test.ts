@@ -128,8 +128,8 @@ test('conflicts need a resolution', () => {
   assert.deepEqual([conflict.local.body, conflict.imported.body], ['Grace', 'Ada'])
 
   rejects(() => applyImport(target, archive, 'a.zip', preview.sha256, preview.localRevision, mappings, []))
-  const take = { scope: 'user', nodeId: conflict.id, choice: 'take_imported' } as const
-  const unknown = { scope: 'space', nodeId: 'm-missing', choice: 'keep_local' } as const
+  const take = { scope: 'user', nodeId: conflict.id, revision: conflict.revision, choice: 'take_imported' } as const
+  const unknown = { scope: 'space', nodeId: 'm-missing', revision: conflict.revision, choice: 'keep_local' } as const
   rejects(() => applyImport(target, archive, 'a.zip', preview.sha256, preview.localRevision, mappings, [take, unknown]))
   rejects(() => applyImport(target, archive, 'a.zip', '0'.repeat(64), preview.localRevision, mappings, [take]))
   const report = applyImport(target, archive, 'a.zip', preview.sha256, preview.localRevision, mappings, [take])
@@ -148,14 +148,19 @@ test('a preview cannot overwrite a newer edit to the same conflicting node', () 
   write(target, project, [{ action: 'replace', id: original.id, expectedRevision: original.revision, body: 'Grace' }])
   const local = view(target, 'user', undefined, ['Identity', 'Name'])
   const preview = previewImport(target, archive, 'a.zip', [])
-  const resolutions = [{ scope: 'user', nodeId: local.id, choice: 'take_imported' }] as const
+  const conflict = preview.scopes[0]?.conflicts[0]
+  assert.ok(conflict)
+  const resolutions = [{ scope: 'user', nodeId: local.id, revision: conflict.revision, choice: 'take_imported' }] as const
   write(target, project, [{ action: 'replace', id: local.id, expectedRevision: local.revision, body: 'Newer local' }])
   const stale = rejects(() => applyImport(target, archive, 'a.zip', preview.sha256, preview.localRevision, [], resolutions))
   assert.equal(stale.kind, 'concurrent_modification')
   assert.equal(view(target, 'user', undefined, ['Identity', 'Name']).body, 'Newer local')
   const refreshed = previewImport(target, archive, 'a.zip', [])
-  assert.equal(refreshed.scopes[0]?.conflicts[0]?.local.body, 'Newer local')
-  const report = applyImport(target, archive, 'a.zip', refreshed.sha256, refreshed.localRevision, [], resolutions)
+  const reviewed = refreshed.scopes[0]?.conflicts[0]
+  assert.ok(reviewed)
+  assert.equal(reviewed.local.body, 'Newer local')
+  const report = applyImport(target, archive, 'a.zip', refreshed.sha256, refreshed.localRevision, [],
+    [{ ...resolutions[0], revision: reviewed.revision }])
   assert.equal(view(target, 'user', undefined, ['Identity', 'Name']).body, 'Ada')
   assert.ok(report.backupDirectory)
   assert.match(readFileSync(path.join(report.backupDirectory, 'user.md'), 'utf8'), /Newer local/)
@@ -169,13 +174,70 @@ test('keeping both adds a copy', () => {
   write(target, context('host-a', '/work/alpha'), [{ action: 'replace', id: shell.id, expectedRevision: shell.revision, body: 'Bash' }])
   const mappings = [mapping(project, { action: 'ignore' })]
   const preview = previewImport(target, archive, 'a.zip', mappings)
+  const conflict = preview.scopes.find(scope => scope.scope === 'space')?.conflicts[0]
+  assert.ok(conflict)
   const report = applyImport(target, archive, 'a.zip', preview.sha256, preview.localRevision, mappings,
-    [{ scope: 'space', nodeId: shell.id, choice: 'keep_both' }])
+    [{ scope: 'space', nodeId: shell.id, revision: conflict.revision, choice: 'keep_both' }])
   assert.equal(report.added, 1)
   const shells = target.load('space', undefined).views('space').filter(item => JSON.stringify(item.path) === '["Base","Shell"]')
   assert.equal(shells.length, 2)
   assert.ok(shells.some(item => item.id === shell.id && item.body === 'Bash'))
   assert.ok(shells.some(item => item.id !== shell.id && item.body === 'PowerShell'))
+})
+
+test('two archived projects compare and apply against one staged target in manifest order', () => {
+  const target = store()
+  const id = target.updateRegistry(registry => registry.createUnbound('Target', [], undefined, '2026-11-13T00:00Z'))
+  const archive = writeArchive(JSON.stringify({
+    format: 'vulcan-markdown-memory', version: EXPORT_FORMAT_VERSION, exportedAt: '2026-11-13T00:00Z',
+    user: false, space: false, projects: ['pack-a', 'pack-b'].map(project => ({ id: project, name: project, paths: [] })),
+  }), [['projects/pack-a.md', '# Shared heading\n\nFirst content\n'], ['projects/pack-b.md', '# Shared heading\n\nSecond content\n']])
+  const mappings = ['pack-a', 'pack-b'].map(project => mapping(project, { action: 'link', memoryProjectId: id }))
+  const preview = previewImport(target, archive, 'a.zip', mappings)
+  assert.deepEqual(preview.scopes.map(scope => scope.added.length), [1, 0])
+  const second = preview.scopes[1]?.conflicts[0]
+  assert.ok(second)
+  assert.deepEqual([second.local.body, second.imported.body], ['First content', 'Second content'])
+  const takeSecond = { scope: 'project', packageProjectId: 'pack-b', nodeId: second.id, revision: second.revision, choice: 'take_imported' } as const
+  const reviewed = previewImport(target, archive, 'a.zip', mappings, [takeSecond])
+  assert.equal(reviewed.scopes[1]?.conflicts[0]?.choice, 'take_imported')
+  assert.equal(target.readFileText('project', id), '')
+  const report = applyImport(target, archive, 'a.zip', reviewed.sha256, reviewed.localRevision, mappings, [takeSecond])
+  assert.deepEqual([report.added, report.replaced], [1, 1])
+  assert.equal(view(target, 'project', id, ['Shared heading']).body, 'Second content')
+})
+
+test('an earlier choice changes the reviewed revision of a downstream conflict', () => {
+  const target = store()
+  const id = target.updateRegistry(registry => registry.createUnbound('Target', [], undefined, '2026-11-13T00:00Z'))
+  const original = '# Shared heading\n\nLocal content\n'
+  target.replaceFileText('project', id, '', original)
+  const archive = writeArchive(JSON.stringify({
+    format: 'vulcan-markdown-memory', version: EXPORT_FORMAT_VERSION, exportedAt: '2026-11-13T00:00Z',
+    user: false, space: false, projects: ['pack-a', 'pack-b'].map(project => ({ id: project, name: project, paths: [] })),
+  }), [['projects/pack-a.md', '# Shared heading\n\nFirst content\n'], ['projects/pack-b.md', '# Shared heading\n\nSecond content\n']])
+  const mappings = ['pack-a', 'pack-b'].map(project => mapping(project, { action: 'link', memoryProjectId: id }))
+  const initial = previewImport(target, archive, 'a.zip', mappings)
+  const [first, second] = initial.scopes.map(scope => scope.conflicts[0])
+  assert.ok(first && second)
+  assert.deepEqual([first.local.body, second.local.body], ['Local content', 'Local content'])
+  const takeFirst = { scope: 'project', packageProjectId: 'pack-a', nodeId: first.id, revision: first.revision, choice: 'take_imported' } as const
+  const keepSecond = { scope: 'project', packageProjectId: 'pack-b', nodeId: second.id, revision: second.revision, choice: 'keep_both' } as const
+  const stale = rejects(() => applyImport(target, archive, 'a.zip', initial.sha256, initial.localRevision, mappings, [takeFirst, keepSecond]))
+  assert.equal(stale.kind, 'concurrent_modification')
+  assert.equal(target.readFileText('project', id), original)
+  const updated = previewImport(target, archive, 'a.zip', mappings, [takeFirst, keepSecond])
+  const changed = updated.scopes[1]?.conflicts[0]
+  assert.ok(changed)
+  assert.equal(changed.local.body, 'First content')
+  assert.notEqual(changed.revision, second.revision)
+  assert.equal(changed.choice, 'keep_local')
+  const choice = { ...keepSecond, revision: changed.revision }
+  const reviewed = previewImport(target, archive, 'a.zip', mappings, [takeFirst, choice])
+  assert.equal(reviewed.scopes[1]?.keptBoth, 1)
+  const report = applyImport(target, archive, 'a.zip', reviewed.sha256, reviewed.localRevision, mappings, [takeFirst, choice])
+  assert.deepEqual([report.added, report.replaced], [1, 1])
+  assert.deepEqual(target.load('project', id).views('project').map(node => node.body), ['First content', 'Second content'])
 })
 
 test('duplicates are kept and projects are suggested', () => {

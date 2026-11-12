@@ -82,10 +82,13 @@ export interface ProjectMapping {
 
 export type ConflictChoice = 'keep_local' | 'take_imported' | 'keep_both'
 
+/** A choice for the exact two node versions shown by the preview.
+ *  针对预览中所显示两侧节点版本的处理选择。 */
 export interface ConflictResolution {
   readonly scope: MemoryScope
   readonly packageProjectId?: string
   readonly nodeId: string
+  readonly revision: string
   readonly choice: ConflictChoice
 }
 
@@ -115,10 +118,13 @@ export interface NodeSide {
 
 export type NewerSide = 'local' | 'imported' | 'unknown'
 
-/** A node present on both sides with different content. */
+/** A comparison of both node versions, with the choice used to stage the merge.
+ *  两侧节点版本的比较，以及暂存合并时使用的处理选择。 */
 export interface NodeConflict {
   /** Packaged node id, used by the resolution. */
   readonly id: string
+  readonly revision: string
+  readonly choice: ConflictChoice
   /** Local title path. */
   readonly path: readonly string[]
   readonly local: NodeSide
@@ -134,6 +140,7 @@ export interface ScopeMergePreview {
   readonly memoryProjectId: string | null
   readonly same: number
   readonly added: readonly NodeSummary[]
+  readonly keptBoth: number
   /** Added nodes whose title path already exists locally under another id; both are kept. */
   readonly duplicates: readonly NodeSummary[]
   readonly conflicts: readonly NodeConflict[]
@@ -183,6 +190,13 @@ interface PlannedScope {
   readonly text: string
 }
 
+/** One destination and its staged document. Preserve the original bytes for backup and commit.
+ *  一个目标文件及其暂存文档。保留原始字节以便备份和提交。 */
+interface StagedDocument {
+  readonly original: string | undefined
+  document: MemoryDocument
+}
+
 /** Build an export package of the selected scopes. */
 export function exportPackage(store: MarkdownMemoryStore, selection: ExportSelection): ExportedPackage {
   if (!selection.user && !selection.space && selection.memoryProjectIds.length === 0) {
@@ -222,22 +236,31 @@ export function exportPackage(store: MarkdownMemoryStore, selection: ExportSelec
 
 /** Preview the archive using the local files selected by the supplied mappings.
  *  根据传入的项目映射选择本地文件，并生成归档的导入预览。 */
-export function previewImport(store: MarkdownMemoryStore, archive: Uint8Array, name: string, mappings: readonly ProjectMapping[]): ImportPreview {
+export function previewImport(
+  store: MarkdownMemoryStore,
+  archive: Uint8Array,
+  name: string,
+  mappings: readonly ProjectMapping[],
+  resolutions: readonly ConflictResolution[] = [],
+): ImportPreview {
   const pkg = readPackage(archive, name)
   const snapshot = readImportSnapshot(store, pkg, mappings, false)
+  const choices = resolutionTable(resolutions)
+  const documents = new Map<string, StagedDocument>()
   const scopes: ScopeMergePreview[] = []
   for (const planned of snapshot.scopes) {
-    const original = planned.scope === 'project' && planned.memoryProjectId === undefined
-      ? undefined
-      : snapshot.originals.get(store.scopePath(planned.scope, planned.memoryProjectId))
-    const local = original === undefined ? MemoryDocument.empty() : MemoryDocument.parse(original)
-    const outcome = merge(local, MemoryDocument.parse(planned.text), planned.scope, () => undefined)
+    const outcome = stageScope(store, planned, snapshot.originals, documents, conflict => {
+      const saved = choices.get(conflictKey(planned.scope, planned.packageProjectId, conflict.id))
+      if (saved?.revision === conflict.revision) return saved.choice
+      return conflict.newer === 'imported' ? 'take_imported' : 'keep_local'
+    })
     scopes.push({
       scope: planned.scope,
       packageProjectId: planned.packageProjectId ?? null,
       memoryProjectId: planned.memoryProjectId ?? null,
       same: outcome.same,
       added: outcome.added,
+      keptBoth: outcome.keptBoth,
       duplicates: outcome.duplicates,
       conflicts: outcome.conflicts,
       newSections: outcome.newSections,
@@ -271,14 +294,9 @@ export function applyImport(
   if (snapshot.revision !== expectedLocalRevision) {
     throw new MemoryError('concurrent_modification', 'Local memory changed since it was previewed; preview it again.')
   }
-  const choices = new Map<string, ConflictChoice>()
-  for (const resolution of resolutions) {
-    const key = conflictKey(resolution.scope, resolution.packageProjectId, resolution.nodeId)
-    if (choices.has(key)) throw MemoryError.invalid(`Conflict \`${resolution.nodeId}\` is resolved more than once.`)
-    choices.set(key, resolution.choice)
-  }
+  const choices = resolutionTable(resolutions)
   const now = nowUtcMinute()
-  const documents = new Map<string, { original: string | undefined; document: MemoryDocument }>()
+  const documents = new Map<string, StagedDocument>()
   let added = 0
   let replaced = 0
   let unchanged = 0
@@ -294,22 +312,18 @@ export function applyImport(
       createdProjects.push(id)
       planned.memoryProjectId = id
     }
-    const file = store.scopePath(planned.scope, planned.memoryProjectId)
-    let entry = documents.get(file)
-    if (entry === undefined) {
-      const original = snapshot.originals.get(file)
-      entry = { original, document: original === undefined ? MemoryDocument.empty() : MemoryDocument.parse(original) }
-      documents.set(file, entry)
-    }
-    const outcome = merge(entry.document, MemoryDocument.parse(planned.text), planned.scope,
-      nodeId => choices.get(conflictKey(planned.scope, planned.packageProjectId, nodeId)))
-    const missing = outcome.conflicts.find(conflict => !choices.has(conflictKey(planned.scope, planned.packageProjectId, conflict.id)))
-    if (missing !== undefined) throw MemoryError.invalid(`Conflict \`${missing.id}\` (${missing.path.join(' > ')}) has no resolution.`)
+    const outcome = stageScope(store, planned, snapshot.originals, documents, conflict => {
+      const saved = choices.get(conflictKey(planned.scope, planned.packageProjectId, conflict.id))
+      if (saved === undefined) throw MemoryError.invalid(`Conflict \`${conflict.id}\` (${conflict.path.join(' > ')}) has no resolution.`)
+      if (saved.revision !== conflict.revision) {
+        throw new MemoryError('concurrent_modification', `Conflict \`${conflict.id}\` changed; preview it again.`)
+      }
+      return saved.choice
+    })
     resolved += outcome.conflicts.length
     added += outcome.added.length + outcome.keptBoth
     replaced += outcome.replaced
     unchanged += outcome.same + outcome.conflicts.length - outcome.replaced - outcome.keptBoth
-    if (changed(outcome)) entry.document = outcome.document
   }
   if (resolved !== choices.size) throw MemoryError.invalid('A resolution names a conflict this import does not have; preview it again.')
   const files: PreparedFile[] = []
@@ -327,6 +341,45 @@ export function applyImport(
   const backupDirectory = backUp(store, files, now)
   commitFiles(files)
   return { backupDirectory, added, replaced, unchanged, createdProjects }
+}
+
+/** Use the same staged destination and merge order for preview and commit.
+ *  预览和提交共用相同的目标文档暂存方式与合并顺序。 */
+function stageScope(
+  store: MarkdownMemoryStore,
+  planned: PlannedScope,
+  originals: ReadonlyMap<string, string | undefined>,
+  documents: Map<string, StagedDocument>,
+  choose: (conflict: Omit<NodeConflict, 'choice'>) => ConflictChoice,
+): MergeOutcome {
+  const imported = MemoryDocument.parse(planned.text)
+  // A not-yet-created project is independent of every other destination.
+  // 尚未创建的项目与其他任何导入目标相互独立。
+  if (planned.scope === 'project' && planned.memoryProjectId === undefined) {
+    return merge(MemoryDocument.empty(), imported, planned.scope, choose)
+  }
+  const file = store.scopePath(planned.scope, planned.memoryProjectId)
+  let entry = documents.get(file)
+  if (entry === undefined) {
+    const original = originals.get(file)
+    entry = { original, document: original === undefined ? MemoryDocument.empty() : MemoryDocument.parse(original) }
+    documents.set(file, entry)
+  }
+  const outcome = merge(entry.document, imported, planned.scope, choose)
+  if (changed(outcome)) entry.document = outcome.document
+  return outcome
+}
+
+/** Index the supplied decisions and reject ambiguous duplicates.
+ *  为传入的决策建立索引，并拒绝重复的冲突决策。 */
+function resolutionTable(resolutions: readonly ConflictResolution[]): Map<string, ConflictResolution> {
+  const choices = new Map<string, ConflictResolution>()
+  for (const resolution of resolutions) {
+    const key = conflictKey(resolution.scope, resolution.packageProjectId, resolution.nodeId)
+    if (choices.has(key)) throw MemoryError.invalid(`Conflict \`${resolution.nodeId}\` is resolved more than once.`)
+    choices.set(key, resolution)
+  }
+  return choices
 }
 
 /** Read the registry and affected scopes once and identify the exact input to the reviewed merge.
@@ -441,7 +494,9 @@ function projectCandidates(project: PackageProject, registry: MemoryRegistry): P
  * key, other nodes by id; identical nodes are skipped, missing nodes are appended under their
  * matched parent, and conflicts follow `choose` (unresolved conflicts keep the local side).
  */
-function merge(local: MemoryDocument, imported: MemoryDocument, scope: MemoryScope, choose: (nodeId: string) => ConflictChoice | undefined): MergeOutcome {
+/** Stage the imported nodes against the supplied destination and return their exact comparisons.
+ *  将导入节点暂存到指定目标，并返回节点的准确比较结果。 */
+function merge(local: MemoryDocument, imported: MemoryDocument, scope: MemoryScope, choose: (conflict: Omit<NodeConflict, 'choice'>) => ConflictChoice): MergeOutcome {
   const outcome: MergeOutcome = {
     // Rendering reproduces the source bytes, so parsing them again is a deep copy.
     document: MemoryDocument.parse(local.render()),
@@ -474,16 +529,21 @@ function merge(local: MemoryDocument, imported: MemoryDocument, scope: MemorySco
       }
       const localUpdated = found.meta?.updated ?? null
       const importedUpdated = view.meta?.updated ?? null
-      outcome.conflicts.push({
+      const conflict: Omit<NodeConflict, 'choice'> = {
         id: view.id,
+        revision: sha256(Buffer.from(JSON.stringify([
+          found.id, found.revision, found.path, localTitle, found.body, localUpdated,
+          view.id, view.revision, title, view.body, importedUpdated,
+        ]))),
         path: found.path,
         local: { title: localTitle, body: found.body, updated: localUpdated },
         imported: { title, body: view.body, updated: importedUpdated },
         newer: localUpdated !== null && importedUpdated !== null && importedUpdated > localUpdated ? 'imported'
           : localUpdated !== null && importedUpdated !== null && localUpdated > importedUpdated ? 'local'
             : 'unknown',
-      })
-      const choice = choose(view.id)
+      }
+      const choice = choose(conflict)
+      outcome.conflicts.push({ ...conflict, choice })
       if (choice === 'take_imported') {
         const target = outcome.document.node(found.locator)
         if (target === undefined) throw new Error('the match comes from this document')
@@ -500,7 +560,7 @@ function merge(local: MemoryDocument, imported: MemoryDocument, scope: MemorySco
         const copy = node.detached(found.level, eol)
         if (copy.meta !== undefined) {
           const { section: _section, ...meta } = copy.meta
-          copy.setMeta({ ...meta, id: unusedNodeId(mergedViews) })
+          copy.setMeta({ ...meta, id: unusedNodeId(mergedViews, importedViews, conflict.revision) })
         }
         const parent = found.locator.slice(0, -1)
         outcome.document.append(parent.length > 0 ? parent : undefined, copy)
@@ -549,10 +609,12 @@ function samePath(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((title, index) => title === right[index])
 }
 
-function unusedNodeId(views: readonly NodeView[]): string {
-  for (;;) {
-    const candidate = `m-${randomHex(8)}`
-    if (!views.some(view => view.id === candidate)) return candidate
+/** Allocate the same unused copy ID for the same staged conflict in preview and apply.
+ *  同一暂存冲突在预览和应用时分配相同的未占用副本 ID。 */
+function unusedNodeId(local: readonly NodeView[], imported: readonly NodeView[], revision: string): string {
+  for (let index = 0; ; index++) {
+    const candidate = `m-${sha256(Buffer.from(`${revision}:${index}`)).slice(0, 8)}`
+    if (!local.some(view => view.id === candidate) && !imported.some(view => view.id === candidate)) return candidate
   }
 }
 
@@ -690,20 +752,22 @@ export function parseMappings(value: unknown): ProjectMapping[] {
   })
 }
 
-/** Parse the page's conflict resolutions. */
+/** Parse conflict choices and the revisions of their reviewed comparisons.
+ *  解析冲突选择以及相应已审阅比较的修订值。 */
 export function parseResolutions(value: unknown): ConflictResolution[] {
   if (value === undefined || value === null) return []
   if (!Array.isArray(value)) throw MemoryError.invalid('`resolutions` must be an array.')
   return value.map((item): ConflictResolution => {
-    if (!isRecord(item) || Object.keys(item).some(key => !['scope', 'packageProjectId', 'nodeId', 'choice'].includes(key))) {
+    if (!isRecord(item) || Object.keys(item).some(key => !['scope', 'packageProjectId', 'nodeId', 'revision', 'choice'].includes(key))) {
       throw MemoryError.invalid('A resolution has unknown fields.')
     }
-    const { scope, packageProjectId, nodeId, choice } = item
+    const { scope, packageProjectId, nodeId, revision, choice } = item
     if (!isScope(scope) || typeof nodeId !== 'string' || (choice !== 'keep_local' && choice !== 'take_imported' && choice !== 'keep_both')
+      || typeof revision !== 'string' || !/^[a-f0-9]{64}$/.test(revision)
       || (packageProjectId !== undefined && packageProjectId !== null && typeof packageProjectId !== 'string')) {
-      throw MemoryError.invalid('A resolution needs `scope`, `nodeId` and a `choice` of keep_local, take_imported or keep_both.')
+      throw MemoryError.invalid('A resolution needs `scope`, `nodeId`, the reviewed `revision` and a valid `choice`.')
     }
-    return { scope, ...typeof packageProjectId === 'string' ? { packageProjectId } : {}, nodeId, choice }
+    return { scope, ...typeof packageProjectId === 'string' ? { packageProjectId } : {}, nodeId, revision, choice }
   })
 }
 

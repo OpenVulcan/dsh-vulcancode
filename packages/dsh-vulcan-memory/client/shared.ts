@@ -125,8 +125,12 @@ export interface NodeSide {
   readonly updated: string | null
 }
 
+/** The exact conflict and choice used in the server's staged import.
+ *  服务端暂存导入所使用的准确冲突和对应选择。 */
 export interface NodeConflict {
   readonly id: string
+  readonly revision: string
+  readonly choice: ConflictChoice
   readonly path: readonly string[]
   readonly local: NodeSide
   readonly imported: NodeSide
@@ -139,6 +143,7 @@ export interface ScopeMergePreview {
   readonly memoryProjectId: string | null
   readonly same: number
   readonly added: readonly { readonly id: string; readonly path: readonly string[] }[]
+  readonly keptBoth: number
   readonly duplicates: readonly { readonly id: string; readonly path: readonly string[] }[]
   readonly conflicts: readonly NodeConflict[]
   readonly newSections: readonly string[]
