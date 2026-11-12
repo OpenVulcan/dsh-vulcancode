@@ -43,11 +43,11 @@ import { foldSqliteRecall, recallStateSchema, SQLITE_RECALL_PROJECTION, updateSq
 // 定义 SQLite 专用的工具和页面请求协议。
 const SQL_SEARCH = 'sqlite_memory_search'
 const SQL_WRITE = 'sqlite_memory_write'
-const searchInput = z.object({ query: z.string().trim().min(1).max(4000), semantic: z.boolean().optional() })
+const searchInput = z.strictObject({ query: z.string().trim().min(1).max(4000) })
 const writeInput = z.object({ operation: mutationSchema })
 const projectInput = z.object({ projectId: z.string().optional() })
 const editInput = projectInput.extend(writeInput.shape)
-const pageSearchInput = projectInput.extend(searchInput.shape)
+const pageSearchInput = projectInput.extend({ ...searchInput.shape, semantic: z.boolean().optional() })
 const profileInput = projectInput.extend({ scope: z.enum(['user', 'project']), text: z.string().trim().min(1).max(4000) })
 const kindInput = z.enum(['profile', 'memory'])
 
@@ -94,12 +94,14 @@ export async function apply(ctx: Context): Promise<void> {
 
   ctx.effect(() => ctx.tools.register({
     name: SQL_SEARCH,
-    description: 'In SQLite memory mode, find relevant long-term memories by keyword. Set semantic=true only when the user requests semantic recall and has enabled OpenVulcan cloud memory.',
+    description: 'In SQLite memory mode, find relevant long-term memories with local keyword search.',
     parameters: z.toJSONSchema(searchInput),
     output: OUTPUT,
-    async execute(args, { agent, signal }) {
-      const { query, semantic } = validated(searchInput, args)
-      return { content: JSON.stringify(await structured.search(sqlProject(agent), query, semantic === true, signal)) }
+    async execute(args, { agent }) {
+      const { query } = validated(searchInput, args)
+      // Only the authenticated page's explicit semantic action may submit text to OpenVulcan.
+      // 仅允许已认证页面发出的显式语义检索操作向 OpenVulcan 提交文本。
+      return { content: JSON.stringify(await structured.search(sqlProject(agent), query, false)) }
     },
   }, { when: sqliteEnabled }))
   ctx.effect(() => ctx.tools.register({
