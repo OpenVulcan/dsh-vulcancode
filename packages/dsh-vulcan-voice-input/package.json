@@ -1,6 +1,6 @@
 {
   "name": "@openvulcan/dsh-vulcan-voice-input",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "Microphone dictation in DeepSeek Harness using OpenVulcan's free transcription service.",
   "license": "MIT",
   "type": "module",

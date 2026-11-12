@@ -1,6 +1,6 @@
 {
   "name": "@openvulcan/openvulcan-account",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "OpenVulcan account: device sign-in, credential storage and refresh, shared by the Vulcan tools.",
   "license": "MIT",
   "repository": { "type": "git", "url": "git+https://github.com/OpenVulcan/dsh-vulcancode.git", "directory": "packages/openvulcan-account" },
