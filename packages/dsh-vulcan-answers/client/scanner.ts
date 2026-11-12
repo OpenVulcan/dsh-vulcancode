@@ -14,6 +14,7 @@
  */
 
 import { parseAnswerComponent, SUPPORTED_ANSWER_LANGUAGES, type AnswerComponent } from '../src/answer-model'
+import { committedFiberPath, type Fiber } from '../src/committed-fiber'
 import { findFenceInfo } from '../src/fences'
 import { subscribeBodyInvalidations } from './body-mutations'
 import type { MarkdownLabels } from './dsh-client'
@@ -52,20 +53,8 @@ interface BlockSource {
   readonly assistant: boolean
 }
 
-/** How far up the fiber tree a lookup walks before giving up. */
-const FIBER_DEPTH = 80
-
 /** While a block waits for its message to settle, re-check at least this often (ms). */
 const PENDING_RECHECK = 800
-
-interface Fiber {
-  readonly tag: number
-  readonly memoizedProps: unknown
-  readonly return: Fiber | null
-  readonly child: Fiber | null
-  readonly alternate: Fiber | null
-  readonly stateNode: unknown
-}
 
 /** React's host component tag. */
 const HOST_COMPONENT = 5
@@ -78,34 +67,6 @@ function reactValue(element: object, prefix: string): unknown {
   return undefined
 }
 
-/**
- * Whether \`fiber\` is the stale half of its pair. A DOM element keeps the fiber it was created with,
- * which after later updates may be the alternate that no longer holds the current props; React does
- * keep the element's props key current, so the first host fiber below \`fiber\` tells which half is live.
- */
-function isStale(fiber: Fiber): boolean {
-  let node: Fiber | null = fiber
-  for (let depth = 0; node !== null && depth < FIBER_DEPTH; depth += 1, node = node.child) {
-    if (node.tag !== HOST_COMPONENT) continue
-    const element = node.stateNode
-    if (typeof element !== 'object' || element === null) return false
-    const props = reactValue(element, '__reactProps$')
-    return props !== undefined && props !== node.memoizedProps
-  }
-  return false
-}
-
-/** The live half of a fiber pair. */
-function live(fiber: Fiber | null | undefined): Fiber | undefined {
-  if (fiber === null || fiber === undefined) return undefined
-  return fiber.alternate !== null && isStale(fiber) ? fiber.alternate : fiber
-}
-
-/** The React fiber of a DOM element, when React rendered it. */
-function fiberOf(element: Element): Fiber | undefined {
-  return live(reactValue(element, '__reactFiber$') as Fiber | undefined)
-}
-
 /** Props of dsh's `CodeBlock`. */
 interface CodeProps {
   readonly code: string
@@ -113,12 +74,22 @@ interface CodeProps {
   readonly streaming: unknown
 }
 
-/** Read what `block` rendered from; undefined when the expected fibers are missing. */
+/**
+ * Read a code block's committed render props. Return undefined if React's code block cannot be found.
+ * 读取代码块已提交的渲染属性。找不到对应的 React 代码块时返回 undefined。
+ */
 function readSource(block: Element): BlockSource | undefined {
-  let fiber: Fiber | undefined = fiberOf(block)
+  // React keeps the element's initial fiber even after committing its alternate.
+  // React 提交另一个副本后，DOM 元素仍持有最初的 Fiber。
+  const attached = reactValue(block, '__reactFiber$') as Fiber | undefined
+  if (attached === undefined) return undefined
+  // Read one committed path so the block, Markdown source and assistant state agree.
+  // 沿同一条已提交路径读取代码块、Markdown 原文和助手消息状态，确保三者一致。
+  const path = committedFiberPath(attached)
+  if (path === undefined) return undefined
   let code: CodeProps | undefined
   let markdown: Record<string, unknown> | undefined
-  for (let depth = 0; fiber && depth < FIBER_DEPTH; depth += 1, fiber = live(fiber.return)) {
+  for (const fiber of path) {
     const props = fiber.memoizedProps as Record<string, unknown> | null
     if (typeof props !== 'object' || props === null) continue
     if (code === undefined) {
