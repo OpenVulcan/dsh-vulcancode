@@ -14,7 +14,7 @@
 
 [简体中文](README.md) | **English**
 
-[Features](#features) · [Architecture and packages](#architecture-and-packages) · [Quick start](#quick-start) · [Development](#development)
+[Features](#features) · [Screenshots](#screenshots) · [Architecture and packages](#architecture-and-packages) · [Quick start](#quick-start) · [Development](#development)
 
 </div>
 
@@ -34,6 +34,16 @@ DeepSeek develops dsh independently of this community project.
 - **Reusable skills and memory** through LuaSkills tools and persistent Markdown memory for the user, space, and project.
 - **Per-model thinking settings** for the levels shown in the pi-ai model picker and the values sent to each model endpoint.
 - **Voice input** uses the free transcription service on your OpenVulcan account's site and inserts the result into the conversation draft.
+
+## Screenshots
+
+### Dark theme · Tool categories
+
+![An interactive answer presents tool categories as cards in the Vulcan Dark theme](docs/assets/dsh-vulcan-dark.png)
+
+### Command theme · Memory tool verification
+
+![An interactive answer presents memory tool verification as metric cards, a checklist, and a table in the Vulcan Command theme](docs/assets/dsh-vulcan-command.png)
 
 ## Architecture and packages
 
