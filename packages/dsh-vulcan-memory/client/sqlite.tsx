@@ -10,7 +10,7 @@ type Entry = { id: string; revision: string; scope: MemoryScope; kind: 'memory' 
 // Mirror the public status and consent payload exposed by the SQLite route.
 // 映射 SQLite 路由公开的状态与同意数据。
 interface CloudStatus {
-  native: 'unsupported' | 'missing' | 'installed'
+  native: 'unsupported' | 'missing' | 'damaged' | 'installed'
   version: string
   approved: boolean
   hasConsent: boolean
@@ -158,9 +158,11 @@ export function SqlitePage({ t }: { t: Translate }) {
       }>
         {status === undefined ? <p className="vac-hint">{t('loading')}</p> : <>
           <p className="vac-hint">{t(`sql.native.${status.native}`)} · {status.version}</p>
-          {status.native === 'missing' && <button type="button" className="vac-btn sm" disabled={busy !== ''} onClick={() => {
-            void perform(t('sql.download'), async () => { await callHost('POST', 'sqlite/install'); await refresh() })
-          }}>{t('sql.download')}</button>}
+          {(status.native === 'missing' || status.native === 'damaged') &&
+            <button type="button" className="vac-btn sm" disabled={busy !== ''} onClick={() => {
+              void perform(t(status.native === 'damaged' ? 'sql.repair' : 'sql.download'),
+                async () => { await callHost('POST', 'sqlite/install'); await refresh() })
+            }}>{t(status.native === 'damaged' ? 'sql.repair' : 'sql.download')}</button>}
           {offer == null ? <p className="vac-hint">{t(status.cloudError ? 'sql.cloudError' : 'sql.noOffer')}</p> : <>
             <strong>{offer.name} · {t(`sql.site.${offer.site}`)}</strong>
             <ul className="vmm-list">{offer.providers.map(provider => <li key={`${provider.capability}/${provider.provider}/${provider.model}`} className="vmm-row">

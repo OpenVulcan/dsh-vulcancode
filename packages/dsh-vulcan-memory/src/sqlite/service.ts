@@ -53,10 +53,12 @@ export class StructuredMemory {
   async status() {
     const store = await this.local()
     let cloudError = false
-    const offer = await this.cloud.offer().catch(() => { cloudError = true; return null })
+    const [native, offer] = await Promise.all([
+      nativeStatus(this.root), this.cloud.offer().catch(() => { cloudError = true; return null }),
+    ])
     this.assertEnabled()
     const consent = store.consent()
-    return { native: nativeStatus(this.root), version: NATIVE_VERSION, offer, cloudError,
+    return { native, version: NATIVE_VERSION, offer, cloudError,
       approved: offer !== null && sameConsent(consent, offer.consent), hasConsent: consent !== null }
   }
 
@@ -95,7 +97,8 @@ export class StructuredMemory {
   async search(project: string, text: string, semantic: boolean, signal?: AbortSignal): Promise<RecordEntry[]> {
     const store = await this.local()
     if (!semantic) return store.search(project, text, 12)
-    const library = libraryPath(this.root)
+    const library = await libraryPath(this.root)
+    this.assertEnabled()
     if (library === null) throw MemoryError.invalid('Install VLDB before running semantic search.')
     const offer = await this.approved(store)
     const guard = this.guard(store, offer, signal)
