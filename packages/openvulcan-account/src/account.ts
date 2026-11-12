@@ -278,7 +278,13 @@ export class OpenVulcanAccount implements AccountSource {
         this.signInWrites.add(write)
         try { await write } finally { this.signInWrites.delete(write) }
         this.assertCurrent(generation)
-        return await this.status()
+        const status = await this.status()
+        this.assertCurrent(generation)
+        if (!cancelled) return status
+        // A cancellation during persistence must retire only the credential from this attempt.
+        // 持久化期间的取消只应清理本次尝试产生的凭据。
+        try { await this.take(credential) } finally { await revoke(credential) }
+        throw new AccountError('the sign-in was cancelled')
       } finally {
         clearTimeout(timeout)
         close()

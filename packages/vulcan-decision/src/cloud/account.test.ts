@@ -45,6 +45,27 @@ test('a cancelled sign-in stores nothing', async () => {
   assert.equal(store.value, undefined)
 })
 
+test('a sign-in cancelled during the store write removes and revokes the saved credential', async () => {
+  const store = new MemoryStore()
+  const started = Promise.withResolvers<Credential>()
+  const release = Promise.withResolvers<void>()
+  const write = store.write.bind(store)
+  store.write = async credential => {
+    started.resolve(credential)
+    await release.promise
+    await write(credential)
+  }
+  const account = new OpenVulcanAccount(store, DEVICE, mock.origin)
+  const pending = await account.signIn('cn')
+  await mock.approve(pending.approvalUrl)
+  const credential = await started.promise
+  pending.cancel()
+  release.resolve()
+  await assert.rejects(pending.done, AccountError)
+  assert.equal(store.value, undefined)
+  assert.ok(mock.revoked.includes(credential.authorization_id))
+})
+
 test('refreshes a credential close to expiry and keeps its authorization', async () => {
   mock.credentialLifetimeMs = REFRESH_AHEAD_MS / 2
   try {
