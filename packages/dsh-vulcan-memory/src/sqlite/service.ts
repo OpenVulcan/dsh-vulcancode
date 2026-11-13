@@ -3,11 +3,12 @@ import { fileURLToPath } from 'node:url'
 import type { AccountSource } from '@openvulcan/openvulcan-account'
 import { z } from 'zod'
 import { MemoryError } from '../markdown/errors.js'
-import { fingerprint, MemoryCloud, sameConsent, type CloudOffer } from './cloud.js'
+import { fingerprint, MemoryCloud, sameConsent, scrub, type CloudOffer } from './cloud.js'
 import { installNative, libraryPath, nativeStatus, NATIVE_VERSION } from './native-install.js'
 import type { VectorRequest } from './native-worker.js'
 import { SqliteStore, type Consent, type RecordEntry } from './store.js'
 import { postaction, precheck, type CompletedTurn } from './workflow.js'
+import { noiseFor, similarity, type TextPolicy } from './text-policy.js'
 
 // Parse the native child's bounded reply without loading Koffi in the dsh process.
 // 解析原生子进程的有限响应，避免在 dsh 主进程中加载 Koffi。
@@ -37,6 +38,10 @@ export class StructuredMemory {
   private reviews = Promise.resolve()
   private pendingReviews = 0
   private modeLifetime = new AbortController()
+  // Cache semantic prototypes only for the active offer and the two bundled noise languages.
+  // 仅为当前方案与两种随包噪声语言缓存语义原型。
+  private noiseModel = ''
+  private prototypes = new Map<ReturnType<typeof noiseFor>, number[][]>()
 
   /** Receive the private data root and functions for checking current mode and account.
    *  接收私有数据根目录，以及查询当前模式和账号的函数。 */
@@ -87,6 +92,18 @@ export class StructuredMemory {
       approved: offer !== null && sameConsent(grant, offer.consent),
       automatic: offer !== null && grant?.automatic === true && sameConsent(grant, offer.consent),
       hasConsent: grant !== null }
+  }
+
+  /** Read the local policy without contacting OpenVulcan.
+   *  读取本机策略，不访问 OpenVulcan。 */
+  async textPolicy(): Promise<TextPolicy> {
+    return (await this.local()).textPolicy()
+  }
+
+  /** Save the policy and invalidate pending work under the old privacy rules.
+   *  保存策略并使旧隐私规则下的待处理工作失效。 */
+  async saveTextPolicy(policy: TextPolicy): Promise<void> {
+    (await this.local()).saveTextPolicy(policy)
   }
 
   /** Download the runtime on explicit request, deduplicating requests within this process.
@@ -148,7 +165,7 @@ export class StructuredMemory {
     guard.check()
     if (!approval.offer.precheck) return profiles
     const memories = await precheck(text, recent, (purpose, input) => this.cloud.infer(approval.offer, purpose, input, guard),
-      queries => this.retrieve(store, approval, library, project, queries, guard))
+      queries => this.retrieve(store, approval, library, project, queries, guard), value => scrub(value, guard.region))
     guard.check()
     return [...profiles, ...memories].filter(record => store.get(project, record.id)?.revision === record.revision)
   }
@@ -175,18 +192,55 @@ export class StructuredMemory {
       if (approval.revision !== consentRevision) return
       if (!approval.offer.postaction) return
       const guard = this.guard(store, approval, signal)
+      if (await this.isNoise(turn, store.textPolicy(), approval, guard)) {
+        guard.check()
+        store.commitDistillation(project, turn.id, approval.revision, [], [])
+        return
+      }
       const profiles = store.list(project, 'profile', 24)
       const result = await postaction(turn, project, profiles,
         (purpose, input) => this.cloud.infer(approval.offer, purpose, input, guard),
         queries => this.retrieve(store, approval, library, project, queries, guard))
       guard.check()
-      store.commitDistillation(project, turn.id, approval.revision, result.changes, result.retire)
+      const changes = result.changes.map(change => ({ ...change, record: { ...change.record,
+        title: scrub(change.record.title, guard.region).slice(0, 160), body: scrub(change.record.body, guard.region).slice(0, 4_000) } }))
+      store.commitDistillation(project, turn.id, approval.revision, changes, result.retire)
       if (result.changes.some(change => change.record.kind === 'memory') || result.retire.length > 0) {
         await this.indexBatch(store, approval, library, project, guard)
       }
     }).finally(() => { this.pendingReviews-- })
     this.reviews = work.catch(() => {})
     return work
+  }
+
+  /** Apply the user prompt's noise policy before sending any extraction request.
+   *  在发出提炼请求之前对用户提示词执行噪声策略。 */
+  private async isNoise(turn: CompletedTurn, policy: TextPolicy, approval: ApprovedOffer,
+    guard: ReturnType<StructuredMemory['guard']>): Promise<boolean> {
+    // Timeline turns retain mixed evidence. Only simple turns use the intake filter.
+    // 时间线回合保留混合证据，仅简单回合经过准入过滤。
+    if (!policy.noise || turn.dialogue.timeline.length > 0) return false
+    const user = scrub(turn.dialogue.user, guard.region).trim()
+    const rules = noiseFor(user)
+    if (rules.some(rule => rule.regex.some(regex => regex.test(user)))) return true
+    if (!policy.semanticNoise || user === '') return false
+    const { offer } = approval
+    const model = fingerprint([offer.consent, offer.dimension])
+    if (model !== this.noiseModel) {
+      this.noiseModel = model
+      this.prototypes.clear()
+    }
+    const targets = rules.flatMap(rule => rule.phrases.map(phrase => ({ phrase, threshold: rule.threshold })))
+    let prototypes = this.prototypes.get(rules)
+    if (prototypes === undefined) {
+      prototypes = []
+      for (let offset = 0; offset < targets.length; offset += 10) {
+        prototypes.push(...await this.cloud.embed(offer, targets.slice(offset, offset + 10).map(target => target.phrase), 'document', guard))
+      }
+      this.prototypes.set(rules, prototypes)
+    }
+    const [vector] = await this.cloud.embed(offer, [user], 'document', guard)
+    return targets.some((target, index) => similarity(vector!, prototypes[index]!) >= target.threshold)
   }
 
   /** Backfill old and edited memories across projects in resumable, quota-bounded batches.
@@ -243,7 +297,7 @@ export class StructuredMemory {
   private async indexBatch(store: SqliteStore, approval: ApprovedOffer, library: string, project: string | undefined,
     guard: ReturnType<StructuredMemory['guard']>): Promise<number> {
     const { offer } = approval
-    const model = fingerprint([offer.consent, offer.dimension])
+    const model = fingerprint([offer.consent, offer.dimension, 'pii-v2', guard.region])
     const pending = store.pending(project, model)
     const vectors = pending.length === 0 ? [] :
       await this.cloud.embed(offer, pending.map(entry => `${entry.title}\n${entry.body}`), 'document', guard)
@@ -261,7 +315,7 @@ export class StructuredMemory {
   private async retrieve(store: SqliteStore, approval: ApprovedOffer, library: string, project: string,
     queries: string[], guard: ReturnType<StructuredMemory['guard']>): Promise<RecordEntry[]> {
     const { offer } = approval
-    const model = fingerprint([offer.consent, offer.dimension])
+    const model = fingerprint([offer.consent, offer.dimension, 'pii-v2', guard.region])
     const vectors = await this.cloud.embed(offer, queries, 'query', guard)
     const ranked = new Map<string, { entry: RecordEntry; score: number }>()
     // Stale and deleted vectors cannot resurrect content. SQLite owns scope, body and revision.
@@ -318,7 +372,7 @@ export class StructuredMemory {
    *  将模式、同意和取消检查传入异步推理。 */
   private guard(store: SqliteStore, approval: ApprovedOffer, requestSignal?: AbortSignal) {
     const signal = AbortSignal.any([this.lifetime.signal, this.modeLifetime.signal, ...(requestSignal === undefined ? [] : [requestSignal])])
-    return { signal, check: () => { signal.throwIfAborted(); this.assertApproval(store, approval) } }
+    return { signal, region: store.textPolicy().region, check: () => { signal.throwIfAborted(); this.assertApproval(store, approval) } }
   }
 
   /** Run one isolated FFI process and resolve validated hits within a fixed deadline.

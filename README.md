@@ -77,7 +77,7 @@ dsh 通过套件的 `cordis.patch.yml` 装载八个插件。自动审批和语�
 
 默认使用 Markdown 保存用户画像、空间记忆和项目记忆。向模型提供 `memory_outline`、`memory_search`、`memory_write` 与 `memory-curator` 技能，并在会话开始时按预算注入快照。侧栏「长期记忆」支持编辑、调整注入预算和导入导出。源码在 [packages/dsh-vulcan-memory](packages/dsh-vulcan-memory)。
 
-在「长期记忆 → 记忆模式」选择 **VMM 向量记忆**，再打开「记忆与画像」。登录 OpenVulcan、下载 VLDB 并确认自动记忆授权后，对话前会执行 VMM 召回，正常完成的回合会提炼并审核记忆与画像。推理只使用账号所属站点的默认免费方案。VLDB 通过 FFI 在本机执行向量检索，Jieba 和 FTS5 补充中文词法匹配。
+在「长期记忆 → 记忆模式」选择 **VMM 向量记忆** 并保存，即可进入「模型与服务」。这里显示 OpenVulcan 账号所属站点的默认免费方案及各阶段模型，并提供 VLDB 下载、地区 PII 脱敏预览和噪声过滤设置。启用后，对话前执行 VMM 召回，正常完成的回合会在噪声筛选后提炼并审核记忆与画像。VLDB 通过 FFI 在本机执行向量检索，Jieba 和 FTS5 补充中文词法匹配。
 
 VMM 与 Markdown 各自保存数据。升级保留已有结构化记录，启用自动记忆后会跨项目分批补建向量。原有授权适用于手动功能，自动功能需要重新确认。`sqlite_memory_search` 和 `sqlite_memory_write` 保留原工具名。VLDB 从 GitHub Release 按平台下载、校验并缓存，覆盖 Windows x64、macOS x64/arm64 和 Linux glibc x64/arm64。 [VLDB 发行包](https://github.com/OpenVulcan/vldb-lancedb/releases/tag/v0.1.5)
 

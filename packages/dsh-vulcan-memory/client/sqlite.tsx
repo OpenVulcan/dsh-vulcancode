@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
-import { fill, type Translate } from './i18n'
+import { fill, type Key, type Translate } from './i18n'
 import { Dialog, Section, Segments } from './parts'
 import { callHost, messageOf, SCOPES, type HostProject, type MemoryScope } from './shared'
+import { TextPolicyPanel } from './text-policy'
 
 // Mirror the host record type in the browser bundle.
 // 在浏览器包中映射主机端记录类型。
@@ -33,7 +34,7 @@ type Draft = { scope: MemoryScope; title: string; body: string; entry?: Entry }
 
 /** Render local SQLite records, scope selection, search and the free service controls.
  *  渲染本地 SQLite 记录、范围选择、检索和免费服务控制。 */
-export function SqlitePage({ t }: { t: Translate }) {
+export function SqlitePage({ t, tab }: { t: Translate; tab: 'sqlite' | 'models' }) {
   // Keep editor and search state apart from the server's record list.
   // 将编辑与检索状态和服务端记录列表分开。
   const [status, setStatus] = useState<CloudStatus>()
@@ -60,6 +61,7 @@ export function SqlitePage({ t }: { t: Translate }) {
     void refresh().catch((failure: unknown) => { setError(messageOf(failure)) })
   }, [refresh])
   useEffect(() => {
+    if (tab !== 'sqlite') return
     let active = true
     setEntries(undefined)
     const params = new URLSearchParams({ projectId: project, kind, offset: String(offset) })
@@ -69,7 +71,7 @@ export function SqlitePage({ t }: { t: Translate }) {
       if (active) { setEntries([]); setError(messageOf(failure)) }
     })
     return () => { active = false }
-  }, [project, kind, offset, generation])
+  }, [project, kind, offset, generation, tab])
 
   /** Run a page action with a shared pending state and a readable error.
    *  使用统一的等待状态执行页面操作，并显示可读错误。 */
@@ -120,7 +122,7 @@ export function SqlitePage({ t }: { t: Translate }) {
   const rows = results ?? entries?.slice(0, 50)
   return (
     <>
-      <Section title={t('sql.records')} lead={t('sql.recordsHint')}
+      {tab === 'sqlite' && <Section title={t('sql.records')} lead={t('sql.recordsHint')}
         actions={<button type="button" className="vac-btn sm primary" disabled={busy !== ''} onClick={() => {
           setDraft({ scope: project === '' ? 'user' : 'project', title: '', body: '' }); setError('')
         }}>{t('node.add')}</button>}>
@@ -157,7 +159,8 @@ export function SqlitePage({ t }: { t: Translate }) {
           <button type="button" className="vac-btn sm" disabled={offset === 0 || busy !== ''} onClick={() => { setOffset(offset - 50) }}>{t('sql.previous')}</button>
           <button type="button" className="vac-btn sm" disabled={(entries?.length ?? 0) < 51 || busy !== ''} onClick={() => { setOffset(offset + 50) }}>{t('sql.next')}</button>
         </div>}
-      </Section>
+      </Section>}
+      {tab === 'models' && <>
       <Section title={t('sql.cloud')} lead={t('sql.cloudHint')} actions={
         <button type="button" className="vac-btn sm" disabled={busy !== ''} onClick={() => { void perform(t('retry'), refresh) }}>{t('retry')}</button>
       }>
@@ -169,13 +172,22 @@ export function SqlitePage({ t }: { t: Translate }) {
                 async () => { await callHost('POST', 'sqlite/install'); await refresh() })
             }}>{t(status.native === 'damaged' ? 'sql.repair' : 'sql.download')}</button>}
           {offer == null ? <p className="vac-hint">{t(status.cloudError ? 'sql.cloudError' : 'sql.noOffer')}</p> : <>
-            <strong>{offer.name} · {t(`sql.site.${offer.site}`)}</strong>
-            <ul className="vmm-list">{offer.providers.map(provider => <li key={JSON.stringify(provider)} className="vmm-row">
-              <div className="vmm-row-main"><strong>{provider.provider} · {provider.model}</strong>
-                <span className="vac-hint">{provider.region} · {provider.data_policy}</span>
-                {provider.purposes !== undefined && <span className="vac-hint">{provider.purposes.join(' · ')}</span>}</div>
-              <a href={provider.privacy_url} target="_blank" rel="noreferrer">{t('sql.privacy')}</a>
-            </li>)}</ul>
+            <div className="vac-between"><strong>{offer.name} · {t(`sql.site.${offer.site}`)}</strong>
+              <span className="vac-badge info">{offer.consent.id}</span></div>
+            <ul className="vmm-list">{MODEL_STAGES.map(stage => {
+              const provider = offer.providers.find(route => stage === 'embedding' ? route.capability === 'embedding'
+                : route.capability === 'inference' && (route.purposes === undefined || route.purposes.includes(stage)))
+              return <li key={stage} className="vmm-row">
+                <div className="vmm-row-main">
+                  <strong>{t(`sql.stage.${stage}` as Key)}</strong>
+                  {provider === undefined ? <span className="vac-hint">{t('sql.stageUnavailable')}</span> : <>
+                    <span>{provider.provider} · <code>{provider.model}</code></span>
+                    <span className="vac-hint">{provider.region} · {provider.data_policy}</span>
+                  </>}
+                </div>
+                {provider !== undefined && <a href={provider.privacy_url} target="_blank" rel="noreferrer">{t('sql.privacy')}</a>}
+              </li>
+            })}</ul>
             <p className="vac-hint">{t('sql.consentHint')}</p>
             {(!offer.precheck || !offer.postaction) && <p className="vac-hint">{t('sql.partialOffer')}</p>}
             {status.automatic && <p className="vac-hint">{t(status.native === 'installed' ? 'sql.approved' : 'sql.awaitNative')}</p>}
@@ -199,6 +211,8 @@ export function SqlitePage({ t }: { t: Translate }) {
           }}>{t('sql.revoke')}</button>}
         </>}
       </Section>
+      <TextPolicyPanel t={t} />
+      </>}
       {draft === undefined ? <>
         {busy !== '' && <p className="vac-hint" role="status">{busy}…</p>}
         {error !== '' && <p className="vac-error" role="alert">{error}</p>}
@@ -237,3 +251,7 @@ export function SqlitePage({ t }: { t: Translate }) {
     </>
   )
 }
+
+// Label only the stages the DSH implementation actually invokes.
+// 只标注 DSH 实际调用的阶段。
+const MODEL_STAGES = ['embedding', 'pcl1', 'pcl2', 'ptl1', 'ptl2', 'profile_instruction'] as const

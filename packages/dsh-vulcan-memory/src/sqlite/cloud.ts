@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { SITES, type AccountSource, type Credential } from '@openvulcan/openvulcan-account'
 import { z } from 'zod'
 import type { Consent } from './store.js'
+import { maskBasic, redactPayload, redactText, type TextPolicy } from './text-policy.js'
 
 // Parse only published fields from the dedicated free memory inference catalog.
 // 只解析专用免费记忆推理目录中公布的字段。
@@ -34,6 +35,7 @@ export interface CloudOffer {
 interface InferenceGuard {
   check(): void
   signal: AbortSignal
+  region: TextPolicy['region']
 }
 
 /** Hash structured identities so identifiers cannot become filesystem names or SQL fragments.
@@ -50,13 +52,8 @@ export function sameConsent(left: Consent | null, right: Consent): boolean {
 
 /** Remove common secret forms before submitting bounded business text.
  *  提交有限长度的业务文本前，移除常见的凭据形式。 */
-export function scrub(text: string): string {
-  return text
-    .replace(/-----BEGIN [^-\r\n]*PRIVATE KEY-----[\s\S]*?-----END [^-\r\n]*PRIVATE KEY-----/gi, '[redacted]')
-    .replace(/\b(?:Bearer|Auth)\s+[\w.~/+=-]{12,}/gi, '[redacted]')
-    .replace(/\b(?:password|passwd|api[_-]?key|access[_-]?token|client[_-]?secret)\s*[:=]\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)/gi, '[redacted]')
-    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[redacted]')
-    .slice(0, 4200)
+export function scrub(text: string, region?: TextPolicy['region']): string {
+  return (region === undefined ? maskBasic(text) : redactText(text, region).text).slice(0, 4200)
 }
 
 /** Use the account's regional OpenVulcan memory endpoint and server-selected free offer.
@@ -95,7 +92,7 @@ export class MemoryCloud {
   async embed(offer: CloudOffer, texts: string[], task: 'document' | 'query', guard: InferenceGuard): Promise<number[][]> {
     const result = z.array(z.array(z.number().refine(value => Number.isFinite(Math.fround(value)))).length(offer.dimension))
       .length(texts.length)
-      .parse(await this.infer(offer, 'embedding', { texts: texts.map(scrub), task }, guard))
+      .parse(await this.infer(offer, 'embedding', { texts: texts.map(text => scrub(text, guard.region)), task }, guard))
     if (result.some(vector => !vector.some(value => Math.fround(value) !== 0))) throw new Error('OpenVulcan returned an empty embedding.')
     return result
   }
@@ -138,7 +135,8 @@ export class MemoryCloud {
     const credential = await this.currentCredential(offer)
     guard.check()
     const response = await this.request(credential, 'infer', {
-      contract_version: 1, model_id: offer.consent.id, consent_revision: offer.consent.revision, purpose, input,
+      contract_version: 1, model_id: offer.consent.id, consent_revision: offer.consent.revision, purpose,
+      input: redactPayload(input, guard.region),
     }, guard.signal)
     await this.currentCredential(offer)
     guard.check()

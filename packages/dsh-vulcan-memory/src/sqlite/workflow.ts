@@ -101,14 +101,15 @@ const recallReview = z.object({ selected_candidate_numbers: z.array(z.number().i
 
 /** Run VMM recall planning, local vector retrieval and the free relevance review.
  *  执行 VMM 召回规划、本机向量检索和免费相关性审核。 */
-export async function precheck(text: string, recent: readonly CompletedTurn[], infer: Infer, find: Find): Promise<RecordEntry[]> {
+export async function precheck(text: string, recent: readonly CompletedTurn[], infer: Infer, find: Find,
+  redact: (value: string) => string = scrub): Promise<RecordEntry[]> {
   const user = scrub(text).trim()
   if (user === '') return []
   const plan = planSchema.parse(await infer('pcl1', {
     current_user_input: user, current_context_hints: [], recent_context_hints: [], max_search_queries: 2,
     recent_turns: recent.map(turn => ({
       turn_id: turn.id, content_type: 'RAW_TURN',
-      content: JSON.stringify({ user: turn.dialogue.user.slice(0, 800), assistant: turn.dialogue.assistant.slice(0, 800) }),
+      content: JSON.stringify({ user: redact(turn.dialogue.user).slice(0, 800), assistant: redact(turn.dialogue.assistant).slice(0, 800) }),
     })),
   }))
   if (!plan.need_memory) return []
@@ -116,7 +117,7 @@ export async function precheck(text: string, recent: readonly CompletedTurn[], i
   const records = (await find(plan.queries)).slice(0, MAX_CANDIDATES)
   if (records.length === 0) return []
   const review = recallReview.parse(await infer('pcl2', {
-    current_datetime: new Date().toISOString(), user_content: user, search_queries: plan.queries.map(scrub), intent_reason: scrub(plan.reason),
+    current_datetime: new Date().toISOString(), user_content: user, search_queries: plan.queries.map(query => scrub(query)), intent_reason: scrub(plan.reason),
     candidates: records.map((record, index) => ({
       candidate_number: index + 1, memory_id: record.id, scope_level: record.scope,
       created_datetime: new Date(record.updated).toISOString(), abstract: scrub(record.title), details: scrub(record.body).slice(0, 1_500),

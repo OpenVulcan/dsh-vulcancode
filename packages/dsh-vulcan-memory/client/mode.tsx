@@ -17,7 +17,7 @@ import { TransferSection } from './transfer'
 // 将默认的 Markdown 选项与 SQLite 并列。
 const MODES: readonly MemoryMode[] = ['off', 'markdown', 'sqlite']
 
-export function ModeTab({ t, onSettings }: { t: Translate; onSettings: (settings: MemorySettingsView) => void }) {
+export function ModeTab({ t, onSettings }: { t: Translate; onSettings: (settings: MemorySettingsView, openModels?: boolean) => void }) {
   const [settings, setSettings] = useState<MemorySettingsView | undefined>(undefined)
   const [loadError, setLoadError] = useState<string | undefined>(undefined)
   const [mode, setMode] = useState<MemoryMode>('markdown')
@@ -26,11 +26,11 @@ export function ModeTab({ t, onSettings }: { t: Translate; onSettings: (settings
   const [note, setNote] = useState<{ ok: boolean; text: string } | undefined>(undefined)
   const [generation, setGeneration] = useState(0)
 
-  const adopt = useCallback((next: MemorySettingsView) => {
+  const adopt = useCallback((next: MemorySettingsView, openModels = false) => {
     setSettings(next)
     setMode(next.mode)
     setBudget(draft(next.budget))
-    onSettings(next)
+    onSettings(next, openModels)
   }, [onSettings])
   const load = useCallback(() => {
     setLoadError(undefined)
@@ -54,7 +54,7 @@ export function ModeTab({ t, onSettings }: { t: Translate; onSettings: (settings
     setSaving(true)
     setNote(undefined)
     callHost<MemorySettingsView>('POST', 'settings', { mode, budget: parsed }).then((next) => {
-      adopt(next)
+      adopt(next, settings.mode !== 'sqlite' && next.mode === 'sqlite')
       setNote({ ok: true, text: t('saved') })
     }, (failure: unknown) => { setNote({ ok: false, text: `${t('saveFailed')}: ${messageOf(failure)}` }) }).finally(() => { setSaving(false) })
   }
@@ -69,6 +69,7 @@ export function ModeTab({ t, onSettings }: { t: Translate; onSettings: (settings
         <Segments value={mode} label={t('mode.title')} disabled={saving} onChange={setMode}
           options={MODES.map(value => ({ value, label: t(`mode.${value}` as Key) }))} />
         <p className="vac-hint">{t(`mode.${mode}Hint` as Key)}</p>
+        {mode === 'sqlite' && settings.mode !== 'sqlite' && <p className="vac-hint">{t('mode.saveToConfigure')}</p>}
         {mode !== 'markdown' ? null : (
           <>
             <div className="vmm-grid">

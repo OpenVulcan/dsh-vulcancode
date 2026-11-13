@@ -4,6 +4,7 @@ import path from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
 import { z } from 'zod'
 import { MemoryError } from '../markdown/errors.js'
+import { DEFAULT_TEXT_POLICY, textPolicySchema, type TextPolicy } from './text-policy.js'
 
 // Validate record edits at both the UI and tool boundaries.
 // 在界面和工具入口统一校验记录变更。
@@ -92,6 +93,7 @@ export class SqliteStore {
         );
         CREATE TABLE IF NOT EXISTS distilled_turns (id TEXT PRIMARY KEY);
         CREATE TABLE IF NOT EXISTS retired_records (id TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS text_policy (singleton INTEGER PRIMARY KEY CHECK(singleton=1), value TEXT NOT NULL);
       `)
       return new SqliteStore(db, (value) => jieba.cutForSearch(value.normalize('NFKC').toLowerCase(), true)
         .flatMap(token => token.match(/[\p{L}\p{N}]+/gu) ?? []))
@@ -104,6 +106,27 @@ export class SqliteStore {
   /** Release the local database on plugin unload.
    *  插件卸载时关闭本地数据库。 */
   close(): void { this.db.close() }
+
+  /** Return the configured local privacy and noise policy.
+   *  返回已配置的本机隐私及噪声策略。 */
+  textPolicy(): TextPolicy {
+    const row = this.db.prepare('SELECT value FROM text_policy WHERE singleton=1').get()
+    return row === undefined ? DEFAULT_TEXT_POLICY : textPolicySchema.parse(JSON.parse(String(row.value)))
+  }
+
+  /** Persist the validated policy and invalidate work admitted before the change.
+   *  保存已校验的策略，并使变更前准入的任务失效。 */
+  saveTextPolicy(policy: TextPolicy): void {
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      this.db.prepare('INSERT OR REPLACE INTO text_policy VALUES (1,?)').run(JSON.stringify(policy))
+      this.db.prepare('UPDATE consent_revision SET revision=? WHERE singleton=1').run(randomUUID())
+      this.db.exec('COMMIT')
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+  }
 
   /** Return up to limit visible records of kind, ordered by recency.
    *  按最近更新时间返回最多 limit 条可访问的指定类型记录。 */

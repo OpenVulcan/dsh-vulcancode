@@ -40,6 +40,7 @@ import { consentSchema, mutationSchema } from './sqlite/store.js'
 import { filterSqliteRecallForCompaction, foldSqliteRecall, recallStateSchema, SQLITE_RECALL_PROJECTION, updateSqliteRecall, type RecallState } from './sqlite/recall.js'
 import { watchSqliteTools } from './sqlite/tool-lifecycle.js'
 import { dialogueText, TurnDialogue, type CompletedTurn } from './sqlite/workflow.js'
+import { noiseFor, redactText, textPolicySchema } from './sqlite/text-policy.js'
 
 // Define SQLite-specific tool and page request contracts.
 // 定义 SQLite 专用的工具和页面请求协议。
@@ -52,6 +53,9 @@ const editInput = projectInput.extend(writeInput.shape)
 const pageSearchInput = projectInput.extend({ ...searchInput.shape, semantic: z.boolean().optional() })
 const profileInput = projectInput.extend({ scope: z.enum(['user', 'project']), text: z.string().trim().min(1).max(4000) })
 const kindInput = z.enum(['profile', 'memory'])
+// Accept a bounded local-only PII preview without saving the submitted text.
+// 接收限长的本机 PII 预览，不保存提交文本。
+const previewInput = z.strictObject({ region: textPolicySchema.shape.region, text: z.string().min(1).max(4000) })
 
 export type { MemoryMode, MemorySettings, InjectionBudget } from './settings.js'
 
@@ -342,6 +346,19 @@ export async function apply(ctx: Context): Promise<void> {
         return structured.search(scoped(projectId), query, semantic !== false, request.signal)
       }],
       ['GET', 'sqlite/status', async () => structured.status()],
+      ['GET', 'sqlite/text-policy', () => structured.textPolicy()],
+      ['POST', 'sqlite/text-policy', async request => {
+        const policy = validated(textPolicySchema, await readJson(request))
+        await structured.saveTextPolicy(policy)
+        scheduleIndex()
+        return policy
+      }],
+      ['POST', 'sqlite/pii-preview', async request => {
+        await structured.local()
+        const { region, text } = validated(previewInput, await readJson(request))
+        const redacted = redactText(text, region)
+        return { ...redacted, noise: noiseFor(redacted.text).find(rule => rule.regex.some(regex => regex.test(redacted.text.trim())))?.name ?? null }
+      }],
       ['POST', 'sqlite/install', async () => { await structured.install(); scheduleIndex() }],
       ['POST', 'sqlite/consent', async request => {
         await structured.consent(validated(consentSchema.nullable(), await readJson(request)))
