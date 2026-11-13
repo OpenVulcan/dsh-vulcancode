@@ -42,7 +42,8 @@ import { clearInactiveMemory, filterMemoryForCompaction, foldModeContext, INITIA
   modeContextSchema, VMM_SEARCH, VMM_WRITE, type ModeContext } from './mode-context.js'
 import { watchMemoryTools } from './tool-lifecycle.js'
 import { dialogueText, TurnDialogue, type CompletedTurn } from './sqlite/workflow.js'
-import { noiseFor, textPolicySchema } from './sqlite/text-policy.js'
+import { textPolicySchema } from './sqlite/text-policy.js'
+import { detectNoise, noiseLanguage, noiseThreshold } from './sqlite/noise.js'
 import { piiRegions, piiSelector, redactText } from './sqlite/pii.js'
 import { RULE_FILE_LIMIT } from './sqlite/rule-resources.js'
 
@@ -59,6 +60,10 @@ const previewInput = z.strictObject({ region: textPolicySchema.shape.region, tex
 // Accept only shipped selectors and require the editor revision on each change.
 // 只接受随包选择项，并要求每次变更携带编辑器版本。
 const piiEdit = z.strictObject({ selector: piiSelector, source: z.string().max(RULE_FILE_LIMIT).nullable(), expected: z.uuid().nullable() })
+// Keep the deterministic tester independent of the saved draft and cloud authorization.
+// 使确定性测试独立于已保存草稿及云端授权。
+const noisePreview = previewInput.extend({ noiseLanguage, noiseThreshold })
+const noiseEdit = piiEdit.extend({ selector: noiseLanguage })
 
 export type { MemoryMode, MemorySettings, InjectionBudget } from './settings.js'
 
@@ -405,8 +410,9 @@ export async function apply(ctx: Context): Promise<void> {
       }],
       ['POST', 'sqlite/pii-preview', async request => {
         const { region, text } = validated(previewInput, await readJson(request))
-        const redacted = redactText(text, (await structured.local()).pii(region))
-        return { ...redacted, noise: noiseFor(redacted.text).find(rule => rule.regex.some(regex => regex.test(redacted.text.trim())))?.name ?? null }
+        const store = await structured.local()
+        const redacted = redactText(text, store.pii(region))
+        return { ...redacted, noise: detectNoise(redacted.text, store.noiseRules(store.textPolicy())) }
       }],
       ['GET', 'sqlite/pii-regions', async () => { await structured.local(); return piiRegions }],
       ['GET', 'sqlite/pii-rules', async (_request, url) => {
@@ -418,6 +424,20 @@ export async function apply(ctx: Context): Promise<void> {
         const result = (await structured.local()).savePiiFile(selector, source, expected)
         scheduleIndex()
         return result
+      }],
+      ['GET', 'sqlite/noise-rules', async (_request, url) => {
+        const selector = validated(noiseLanguage, param(url, 'selector'))
+        return (await structured.local()).noiseFile(selector)
+      }],
+      ['POST', 'sqlite/noise-rules', async request => {
+        const { selector, source, expected } = validated(noiseEdit, await readJson(request))
+        return (await structured.local()).saveNoiseFile(selector, source, expected)
+      }],
+      ['POST', 'sqlite/noise-preview', async request => {
+        const { region, text, ...policy } = validated(noisePreview, await readJson(request))
+        const store = await structured.local()
+        const category = detectNoise(redactText(text, store.pii(region)).text, store.noiseRules(policy))
+        return { category }
       }],
       ['POST', 'sqlite/install', async () => { await structured.install(); scheduleIndex() }],
       ['POST', 'sqlite/consent', async request => {

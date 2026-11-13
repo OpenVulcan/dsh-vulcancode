@@ -97,6 +97,38 @@ test('vector cleanup retains candidates for deleted records and rebuilds preview
   }
 })
 
+test('noise override and embedding cache respect exact revisions across database connections', async () => {
+  // Use separate store instances to exercise the persisted noise rule and prototype contracts.
+  // 使用不同存储实例验证已持久化噪声规则与原型契约。
+  const root = await mkdtemp(path.join(tmpdir(), 'dsh-sqlite-noise-'))
+  const first = await SqliteStore.open(root)
+  const second = await SqliteStore.open(root)
+  try {
+    const initial = first.noiseFile('common')
+    const policy = first.textPolicy()
+    assert.equal(policy.noiseThreshold, 0.88)
+    assert.equal(policy.noiseLanguage, 'zh-CN')
+    const source = JSON.stringify({ language: 'common', version: '1.0.0',
+      categories: [{ name: 'fixture', patterns: ['^fixture$'], phrases: ['one phrase'] }] })
+    const edit = first.saveNoiseFile('common', source, initial.revision)
+    assert.equal(second.noiseRules(policy).rules.some(rule => rule.name === 'fixture'), true)
+    assert.throws(() => second.saveNoiseFile('common', null, initial.revision), /changed/)
+    const before = first.consent().revision
+    assert.throws(() => first.saveNoiseFile('common', source.replace('^fixture$', '('), edit.revision), /Invalid/)
+    assert.equal(first.consent().revision, before)
+    first.saveNoisePrototypes('fixture-identity', [[1, 0]], before)
+    assert.deepEqual(second.noisePrototypes('fixture-identity', 1, 2), [[1, 0]])
+    assert.equal(second.noisePrototypes('fixture-identity', 1, 3), undefined)
+    assert.deepEqual(first.saveNoiseFile('common', null, edit.revision), initial)
+    second.saveNoisePrototypes('stale-identity', [[1, 0]], before)
+    assert.equal(first.noisePrototypes('stale-identity', 1, 2), undefined)
+  } finally {
+    first.close()
+    second.close()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('free profile drafts require approval for the exact default offer and never write records', async (t) => {
   // Use a test account and a mocked regional endpoint; no live credentials or profile text are used.
   // 使用测试账号及模拟的区域接口，不使用真实凭据或画像内容。

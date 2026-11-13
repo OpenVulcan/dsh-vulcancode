@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { noiseFor, redactPayload, redactText, similarity } from './text-policy.js'
-import { compilePii, defaultPii, piiRegions, piiSnapshot } from './pii.js'
+import { compilePii, defaultPii, piiRegions, piiSnapshot, redactPayload, redactText } from './pii.js'
+import { detectNoise, evaluateNoise, noiseSnapshot, similarity } from './noise.js'
 
 test('bundled regional PII rules preserve ordinary text and mask matching identifiers', () => {
   // Use synthetic values to exercise each bundled region and the shared Luhn rule.
@@ -68,9 +68,39 @@ test('PII overrides retain rule order and count Unicode matches using the source
 test('noise rules use user categories and cosine scores independent of vector length', () => {
   // Match recall probes and keep a durable engineering statement eligible.
   // 命中回忆探测，同时保留长期工程约束的提炼资格。
-  assert.ok(noiseFor('你还记得吗').some(rule => rule.regex.some(regex => regex.test('你还记得吗'))))
-  assert.ok(!noiseFor('我不确定').some(rule => rule.regex.some(regex => regex.test('我不确定'))))
-  assert.ok(!noiseFor('发布必须签名').some(rule => rule.regex.some(regex => regex.test('发布必须签名'))))
+  const rules = noiseSnapshot('zh-CN', 0.88)
+  assert.equal(detectNoise('你还记得吗', rules), 'meta_question')
+  assert.equal(detectNoise('你还记得吗', noiseSnapshot('common', 0.88)), null)
+  assert.equal(detectNoise('我不确定', rules), null)
+  assert.equal(detectNoise('发布必须签名', rules), null)
   assert.equal(similarity([3, 0], [2, 0]), 1)
   assert.equal(similarity([3, 0], [0, 2]), 0)
+})
+
+test('semantic noise degrades on embedding failure while stale approval stops admission', async () => {
+  // Use a two-dimensional authorized stand-in to test runtime routing without a cloud account.
+  // 使用二维授权替身验证运行路由，无需云账号。
+  const rules = noiseSnapshot('common', 0.88, JSON.stringify({ language: 'common', version: '1.0.0',
+    categories: [{ name: 'fixture', patterns: ['^hello'], phrases: [' one   phrase ', 'one phrase'] }] }))
+  const batches: string[][] = []
+  let cached: number[][] | undefined
+  let available = true
+  let approved = true
+  /** Evaluate through the same embedding, caching and approval boundary as distillation.
+   *  通过与提炼相同的嵌入、缓存和授权边界执行评估。 */
+  const run = (text: string, timeline = false) => evaluateNoise(text, timeline, true, true, rules, async texts => {
+    batches.push(texts)
+    if (!available) throw new Error('Embedding unavailable')
+    return texts.map(() => [1, 0])
+  }, () => cached, vectors => { cached = vectors }, () => { if (!approved) throw new Error('Approval changed') })
+  assert.equal((await run('hello', true)).source, 'timeline')
+  assert.equal((await run('Hello')).source, 'regex')
+  assert.deepEqual(batches, [])
+  assert.equal((await run('Similar message')).category, 'fixture')
+  assert.deepEqual(batches, [['one phrase'], ['Similar message']])
+  available = false
+  assert.deepEqual(await run('Another message'), { source: 'regex-fallback', category: null, confidence: 0 })
+  assert.deepEqual(batches.at(-1), ['Another message'])
+  approved = false
+  await assert.rejects(run('Stale work'), /Approval changed/)
 })

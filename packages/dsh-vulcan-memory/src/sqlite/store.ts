@@ -7,6 +7,7 @@ import { MemoryError } from '../markdown/errors.js'
 import { DEFAULT_TEXT_POLICY, textPolicySchema, type TextPolicy } from './text-policy.js'
 import { compilePiiFile, defaultPii, piiSelector, piiSnapshot, redactText, type PiiSnapshot } from './pii.js'
 import { RULE_FILE_LIMIT } from './rule-resources.js'
+import { defaultNoise, noiseLanguage, noisePrototypeSchema, noiseSnapshot, type NoiseSnapshot } from './noise.js'
 
 // Validate record edits at both the UI and tool boundaries.
 // 在界面和工具入口统一校验记录变更。
@@ -100,6 +101,9 @@ export class SqliteStore {
           family TEXT NOT NULL, selector TEXT NOT NULL, source TEXT NOT NULL, revision TEXT NOT NULL,
           PRIMARY KEY(family,selector)
         );
+        CREATE TABLE IF NOT EXISTS noise_prototypes (
+          singleton INTEGER PRIMARY KEY CHECK(singleton=1), identity TEXT NOT NULL, vectors TEXT NOT NULL
+        );
       `)
       return new SqliteStore(db, (value) => jieba.cutForSearch(value.normalize('NFKC').toLowerCase(), true)
         .flatMap(token => token.match(/[\p{L}\p{N}]+/gu) ?? []))
@@ -158,9 +162,70 @@ export class SqliteStore {
     return this.piiFile(name)
   }
 
+  /** Resolve the exact effective noise files for a saved policy or a local preview.
+   *  为已保存策略或本机预览解析准确的生效噪声文件。 */
+  noiseRules({ noiseLanguage: language, noiseThreshold: threshold }: Pick<TextPolicy, 'noiseLanguage' | 'noiseThreshold'>): NoiseSnapshot {
+    const overrides = this.db.prepare("SELECT selector,source FROM text_rules WHERE family='noise'")
+      .all() as { selector: string; source: string }[]
+    return noiseSnapshot(language, threshold, overrides.find(row => row.selector === 'common')?.source,
+      overrides.find(row => row.selector === 'zh-CN')?.source)
+  }
+
+  /** Read the single cache entry and verify it belongs to the exact rule and model identity.
+   *  读取唯一缓存条目，并校验它属于准确的规则和模型身份。 */
+  noisePrototypes(identity: string, count: number, dimension: number): number[][] | undefined {
+    const row = this.db.prepare('SELECT vectors FROM noise_prototypes WHERE singleton=1 AND identity=?').get(identity)
+    if (row === undefined) return undefined
+    try {
+      const vectors = noisePrototypeSchema.parse(JSON.parse(String(row.vectors)))
+      if (vectors.length === count && vectors.every(vector => vector.length === dimension && vector.some(value => Math.fround(value) !== 0))) {
+        return vectors
+      }
+    } catch {
+      // Invalid derived cache is rebuilt from the configured phrases on the next authorized call.
+      // 派生缓存无效时，在下一次授权调用中根据配置短语重建。
+    }
+    return undefined
+  }
+
+  /** Persist only public rule phrase embeddings after checking the operation's active consent revision.
+   *  校验操作的当前授权版本后，仅持久化规则短语向量。 */
+  saveNoisePrototypes(identity: string, vectors: number[][], consentRevision: string): void {
+    this.db.prepare(`INSERT OR REPLACE INTO noise_prototypes
+      SELECT 1,?,? FROM consent_revision WHERE singleton=1 AND revision=?`)
+      .run(identity, JSON.stringify(vectors), consentRevision)
+  }
+
+  /** Read one editable noise resource and its current revision.
+   *  读取一份可编辑噪声资源及其当前版本。 */
+  noiseFile(selector: string) {
+    const name = noiseLanguage.parse(selector)
+    const override = this.ruleOverride('noise', name)
+    return { source: override?.source ?? defaultNoise(name), revision: override?.revision ?? null }
+  }
+
+  /** Validate both supported compositions atomically with the edit or restoration.
+   *  在编辑或恢复的同一事务内校验两种支持的规则组合。 */
+  saveNoiseFile(selector: string, source: string | null, expected: string | null) {
+    const name = noiseLanguage.parse(selector)
+    if (source !== null && Buffer.byteLength(source) > RULE_FILE_LIMIT) throw MemoryError.invalid('The noise rule file is too large.')
+    this.saveRuleOverride('noise', name, source, expected, () => {
+      try {
+        const common = this.noiseFile('common').source
+        const regional = this.noiseFile('zh-CN').source
+        noiseSnapshot('common', 0.88, common)
+        noiseSnapshot('zh-CN', 0.88, common, regional)
+      } catch {
+        throw MemoryError.invalid('Invalid noise rules. Check the JSON, language, category names, patterns and phrase count.')
+      }
+    })
+    return this.noiseFile(name)
+  }
+
   /** Commit a validated override only when the editor still holds its current revision.
    *  仅在编辑器仍持有当前版本时提交已校验的覆盖。 */
-  private saveRuleOverride(family: 'pii' | 'noise', selector: string, source: string | null, expected: string | null): void {
+  private saveRuleOverride(family: 'pii' | 'noise', selector: string, source: string | null,
+    expected: string | null, validate?: () => void): void {
     this.db.exec('BEGIN IMMEDIATE')
     try {
       if ((this.ruleOverride(family, selector)?.revision ?? null) !== expected) {
@@ -168,6 +233,7 @@ export class SqliteStore {
       }
       if (source === null) this.db.prepare('DELETE FROM text_rules WHERE family=? AND selector=?').run(family, selector)
       else this.db.prepare('INSERT OR REPLACE INTO text_rules VALUES (?,?,?,?)').run(family, selector, source, randomUUID())
+      validate?.()
       this.db.prepare('UPDATE consent_revision SET revision=? WHERE singleton=1').run(randomUUID())
       this.db.exec('COMMIT')
     } catch (error) {
@@ -178,7 +244,8 @@ export class SqliteStore {
 
   /** Persist the validated policy and invalidate work admitted before the change.
    *  保存已校验的策略，并使变更前准入的任务失效。 */
-  saveTextPolicy(policy: TextPolicy): void {
+  saveTextPolicy(input: z.input<typeof textPolicySchema>): void {
+    const policy = textPolicySchema.parse(input)
     this.db.exec('BEGIN IMMEDIATE')
     try {
       this.db.prepare('INSERT OR REPLACE INTO text_policy VALUES (1,?)').run(JSON.stringify(policy))

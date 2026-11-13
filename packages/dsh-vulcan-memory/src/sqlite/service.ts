@@ -8,7 +8,8 @@ import { installNative, libraryPath, nativeStatus, NATIVE_VERSION } from './nati
 import type { VectorRequest } from './native-worker.js'
 import { SqliteStore, type Consent, type RecordEntry } from './store.js'
 import { postaction, precheck, type CompletedTurn } from './workflow.js'
-import { noiseFor, similarity, type TextPolicy } from './text-policy.js'
+import type { TextPolicy } from './text-policy.js'
+import { evaluateNoise, type NoiseSnapshot } from './noise.js'
 
 // Parse the native child's bounded reply without loading Koffi in the dsh process.
 // 解析原生子进程的有限响应，避免在 dsh 主进程中加载 Koffi。
@@ -39,10 +40,9 @@ export class StructuredMemory {
   private reviews = Promise.resolve()
   private pendingReviews = 0
   private modeLifetime = new AbortController()
-  // Cache semantic prototypes only for the active offer and the two bundled noise languages.
-  // 仅为当前方案与两种随包噪声语言缓存语义原型。
-  private noiseModel = ''
-  private prototypes = new Map<ReturnType<typeof noiseFor>, number[][]>()
+  // Cache prototypes for the exact authorized embedding space and effective rule snapshot.
+  // 按准确的已授权嵌入空间及生效规则快照缓存语义原型。
+  private prototypes: { key: string; vectors: number[][] } | undefined
 
   /** Receive the private data root and functions for checking current mode and account.
    *  接收私有数据根目录，以及查询当前模式和账号的函数。 */
@@ -208,7 +208,9 @@ export class StructuredMemory {
       if (approval.revision !== consentRevision) return
       if (!approval.offer.postaction) return
       const guard = this.guard(store, approval, signal)
-      if (await this.isNoise(turn, store.textPolicy(), approval, guard)) {
+      const policy = store.textPolicy()
+      const noise = await this.noiseDecision(store, turn, policy, store.noiseRules(policy), approval, guard)
+      if (noise.category !== null) {
         guard.check()
         store.commitDistillation(project, turn.id, approval.revision, [], [])
         return
@@ -231,32 +233,17 @@ export class StructuredMemory {
 
   /** Apply the user prompt's noise policy before sending any extraction request.
    *  在发出提炼请求之前对用户提示词执行噪声策略。 */
-  private async isNoise(turn: CompletedTurn, policy: TextPolicy, approval: ApprovedOffer,
-    guard: ReturnType<StructuredMemory['guard']>): Promise<boolean> {
-    // Timeline turns retain mixed evidence. Only simple turns use the intake filter.
-    // 时间线回合保留混合证据，仅简单回合经过准入过滤。
-    if (!policy.noise || turn.dialogue.timeline.length > 0) return false
-    const user = scrub(turn.dialogue.user, guard.pii).trim()
-    const rules = noiseFor(user)
-    if (rules.some(rule => rule.regex.some(regex => regex.test(user)))) return true
-    if (!policy.semanticNoise || user === '') return false
+  private noiseDecision(store: SqliteStore, turn: CompletedTurn, policy: TextPolicy, rules: NoiseSnapshot, approval: ApprovedOffer,
+    guard: ReturnType<StructuredMemory['guard']>) {
     const { offer } = approval
-    const model = fingerprint([offer.consent, offer.dimension])
-    if (model !== this.noiseModel) {
-      this.noiseModel = model
-      this.prototypes.clear()
-    }
-    const targets = rules.flatMap(rule => rule.phrases.map(phrase => ({ phrase, threshold: rule.threshold })))
-    let prototypes = this.prototypes.get(rules)
-    if (prototypes === undefined) {
-      prototypes = []
-      for (let offset = 0; offset < targets.length; offset += 10) {
-        prototypes.push(...await this.cloud.embed(offer, targets.slice(offset, offset + 10).map(target => target.phrase), 'document', guard))
-      }
-      this.prototypes.set(rules, prototypes)
-    }
-    const [vector] = await this.cloud.embed(offer, [user], 'document', guard)
-    return targets.some((target, index) => similarity(vector!, prototypes[index]!) >= target.threshold)
+    const key = fingerprint([offer.consent, offer.dimension, guard.pii.digest, rules.digest])
+    return evaluateNoise(scrub(turn.dialogue.user, guard.pii), turn.dialogue.timeline.length > 0,
+      policy.noise, policy.semanticNoise, rules, texts => this.cloud.embed(offer, texts, 'document', guard),
+      () => this.prototypes?.key === key ? this.prototypes.vectors : store.noisePrototypes(key, rules.targets.length, offer.dimension),
+      vectors => {
+        this.prototypes = { key, vectors }
+        store.saveNoisePrototypes(key, vectors, approval.revision)
+      }, guard.check)
   }
 
   /** Backfill old and edited memories across projects in resumable, quota-bounded batches.
