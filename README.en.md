@@ -75,7 +75,9 @@ Install the roughly 280 MB LuaSkills 0.9.0 runtime and CodeKit in Settings › L
 
 #### `@openvulcan/dsh-vulcan-memory`
 
-Stores the user profile, space memory, and project memory in Markdown. It provides `memory_outline`, `memory_search`, `memory_write`, and the `memory-curator` skill. Each conversation starts with a snapshot within the configured budget. Use the Long-term memory sidebar page to edit memory, adjust the budget, or import and export it. Markdown is the available memory mode. See [packages/dsh-vulcan-memory](packages/dsh-vulcan-memory).
+Markdown mode stores user, space, and project memory in independent files. It provides `memory_outline`, `memory_search`, `memory_write`, and the `memory-curator` skill. New or compacted conversations receive a snapshot within the configured budget. Use the Long-term memory sidebar page to edit, import, or export Markdown memory. See [packages/dsh-vulcan-memory](packages/dsh-vulcan-memory).
+
+VMM vector memory uses the signed-in site's default free OpenVulcan offer for automatic recall and distillation of completed turns into memories and profiles. Open Long-term memory › Memory mode to select VMM, then download VLDB and approve automatic memory in Memory & profiles. Vector search runs locally over the VLDB FFI, with Jieba and FTS5 supplying lexical matches. Upgrades preserve existing records and backfill their vectors across projects after approval. Prior approvals still cover manual actions. [VLDB releases](https://github.com/OpenVulcan/vldb-lancedb/releases/tag/v0.1.5)
 
 #### `@openvulcan/dsh-vulcan-reasoning`
 

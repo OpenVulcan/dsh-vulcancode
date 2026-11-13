@@ -7,6 +7,7 @@ import { fingerprint, MemoryCloud, sameConsent, type CloudOffer } from './cloud.
 import { installNative, libraryPath, nativeStatus, NATIVE_VERSION } from './native-install.js'
 import type { VectorRequest } from './native-worker.js'
 import { SqliteStore, type Consent, type RecordEntry } from './store.js'
+import { postaction, precheck, type CompletedTurn } from './workflow.js'
 
 // Parse the native child's bounded reply without loading Koffi in the dsh process.
 // 解析原生子进程的有限响应，避免在 dsh 主进程中加载 Koffi。
@@ -19,8 +20,8 @@ interface ApprovedOffer {
   readonly revision: string
 }
 
-/** Manage one SQLite mode instance, including consent-gated access to the free cloud service.
- *  管理一个 SQLite 模式实例，以及经用户同意的免费云端服务访问。 */
+/** Manage vector memory and consent-gated access to the free cloud service.
+ *  管理向量记忆，以及经用户同意的免费云端服务访问。 */
 export class StructuredMemory {
   // Keep a single lazy database, active download and cancellation source per plugin instance.
   // 每个插件实例共用一个延迟打开的数据库、下载任务和取消信号。
@@ -28,6 +29,14 @@ export class StructuredMemory {
   private download: Promise<void> | undefined
   private lifetime = new AbortController()
   private cloud: MemoryCloud
+  // Coalesce global indexing requests and serialize turn reviews in this process.
+  // 合并全局索引请求，并在当前进程内串行执行回合审核。
+  private indexing: Promise<void> | undefined
+  private indexRequested = false
+  private indexTimer: ReturnType<typeof setTimeout> | undefined
+  private reviews = Promise.resolve()
+  private pendingReviews = 0
+  private modeLifetime = new AbortController()
 
   /** Receive the private data root and functions for checking current mode and account.
    *  接收私有数据根目录，以及查询当前模式和账号的函数。 */
@@ -39,7 +48,16 @@ export class StructuredMemory {
    *  插件卸载时关闭数据库并取消子进程任务。 */
   dispose(): void {
     this.lifetime.abort()
+    clearTimeout(this.indexTimer)
     void this.store?.then(store => { store.close() }, () => {})
+  }
+
+  /** Cancel work from the previous mode and allow a later activation to start fresh.
+   *  取消旧模式的任务，后续重新启用时使用新的取消信号。 */
+  modeChanged(): void {
+    this.modeLifetime.abort()
+    clearTimeout(this.indexTimer)
+    this.modeLifetime = new AbortController()
   }
 
   /** Get the lazy SQLite store while the mode remains selected.
@@ -66,7 +84,9 @@ export class StructuredMemory {
     this.assertEnabled()
     const { grant } = store.consent()
     return { native, version: NATIVE_VERSION, offer, cloudError,
-      approved: offer !== null && sameConsent(grant, offer.consent), hasConsent: grant !== null }
+      approved: offer !== null && sameConsent(grant, offer.consent),
+      automatic: offer !== null && grant?.automatic === true && sameConsent(grant, offer.consent),
+      hasConsent: grant !== null }
   }
 
   /** Download the runtime on explicit request, deduplicating requests within this process.
@@ -86,7 +106,10 @@ export class StructuredMemory {
     const offer = await this.cloud.offer()
     this.assertEnabled()
     if (offer === null || !sameConsent(review, offer.consent)) throw MemoryError.invalid('Refresh and review the current free memory offer.')
-    if (!store.confirmConsent(revision, offer.consent)) {
+    if (review.automatic === true && (!offer.precheck || !offer.postaction)) {
+      throw MemoryError.invalid('The free offer must support both recall and turn distillation.')
+    }
+    if (!store.confirmConsent(revision, { ...offer.consent, ...(review.automatic === true ? { automatic: true } : {}) })) {
       throw new MemoryError('concurrent_modification', 'A newer memory consent decision was saved. Refresh to see the current state.')
     }
   }
@@ -101,42 +124,162 @@ export class StructuredMemory {
 
   /** Combine local keyword hits with an explicit semantic search and return current SQLite rows.
    *  合并本地关键词命中和显式语义检索，返回当前 SQLite 记录。 */
-  async search(project: string, text: string, semantic: boolean, signal?: AbortSignal): Promise<RecordEntry[]> {
+  async search(project: string, text: string, semantic: boolean, signal?: AbortSignal, automatic = false): Promise<RecordEntry[]> {
     const store = await this.local()
     if (!semantic) return store.search(project, text, 12)
+    const library = await this.requireLibrary()
+    const approval = await this.approved(store, automatic)
+    const guard = this.guard(store, approval, signal)
+    await this.indexBatch(store, approval, library, project, guard)
+    return this.retrieve(store, approval, library, project, [text], guard)
+  }
+
+  /** Recall approved vector memory and active profiles for one live human turn.
+   *  为一个正在进行的用户回合召回经授权的向量记忆和活跃画像。 */
+  async recall(project: string, text: string, recent: readonly CompletedTurn[], signal: AbortSignal): Promise<RecordEntry[]> {
+    const store = await this.local()
+    if (store.consent().grant?.automatic !== true) return []
+    const profiles = store.list(project, 'profile', 6)
+    if (text.trim() === '' || store.list(project, 'memory', 1).length === 0) return profiles
     const library = await libraryPath(this.root)
-    this.assertEnabled()
-    if (library === null) throw MemoryError.invalid('Install VLDB before running semantic search.')
-    const approval = await this.approved(store)
-    const { offer } = approval
+    if (library === null) return profiles
+    const approval = await this.approved(store, true)
     const guard = this.guard(store, approval, signal)
     guard.check()
+    if (!approval.offer.precheck) return profiles
+    const memories = await precheck(text, recent, (purpose, input) => this.cloud.infer(approval.offer, purpose, input, guard),
+      queries => this.retrieve(store, approval, library, project, queries, guard))
+    guard.check()
+    return [...profiles, ...memories].filter(record => store.get(project, record.id)?.revision === record.revision)
+  }
+
+  /** Write a manual change first, so unavailable inference never loses the record.
+   *  先保存手工修改，确保推理不可用时记录仍能保留。 */
+  async write(project: string, input: unknown): Promise<RecordEntry | null> {
+    return (await this.local()).write(project, input)
+  }
+
+  /** Queue a committed turn for extraction, review and one atomic revision-checked write.
+   *  将已提交回合排入提取和审核队列，并进行一次带版本检查的原子写入。 */
+  distill(project: string, turn: CompletedTurn, consentRevision: string): Promise<void> {
+    if (this.pendingReviews >= 8) return Promise.reject(new Error('The memory review queue is full.'))
+    this.pendingReviews++
+    const signal = this.modeLifetime.signal
+    const work = this.reviews.then(async () => {
+      if (signal.aborted || !this.enabled()) return
+      const store = await this.local()
+      if (store.hasDistilled(turn.id) || store.consent().revision !== consentRevision) return
+      const library = await libraryPath(this.root)
+      if (library === null) return
+      const approval = await this.approved(store, true)
+      if (approval.revision !== consentRevision) return
+      if (!approval.offer.postaction) return
+      const guard = this.guard(store, approval, signal)
+      const profiles = store.list(project, 'profile', 24)
+      const result = await postaction(turn, project, profiles,
+        (purpose, input) => this.cloud.infer(approval.offer, purpose, input, guard),
+        queries => this.retrieve(store, approval, library, project, queries, guard))
+      guard.check()
+      store.commitDistillation(project, turn.id, approval.revision, result.changes, result.retire)
+      if (result.changes.some(change => change.record.kind === 'memory') || result.retire.length > 0) {
+        await this.indexBatch(store, approval, library, project, guard)
+      }
+    }).finally(() => { this.pendingReviews-- })
+    this.reviews = work.catch(() => {})
+    return work
+  }
+
+  /** Backfill old and edited memories across projects in resumable, quota-bounded batches.
+   *  跨项目分批补建旧记忆和已修改记忆的向量，受额度限制且可继续。 */
+  reindex(): Promise<void> {
+    clearTimeout(this.indexTimer)
+    this.indexRequested = true
+    this.indexing ??= this.drainIndex().finally(() => { this.indexing = undefined })
+    return this.indexing
+  }
+
+  /** Drain at most five batches per trigger so a large legacy store does not monopolize the free quota.
+   *  每次触发最多处理五批，避免大型历史库占满免费额度。 */
+  private async drainIndex(): Promise<void> {
+    const signal = this.modeLifetime.signal
+    for (let batch = 0; batch < 5 && this.indexRequested; batch++) {
+      this.indexRequested = false
+      if (signal.aborted || !this.enabled()) return
+      try {
+        const store = await this.local()
+        if (store.consent().grant?.automatic !== true) return
+        const library = await libraryPath(this.root)
+        if (library === null) return
+        const approval = await this.approved(store, true)
+        const guard = this.guard(store, approval, signal)
+        const indexed = await this.indexBatch(store, approval, library, undefined, guard)
+        this.indexRequested ||= indexed === 10
+      } catch (error) {
+        if (!signal.aborted && !(error instanceof MemoryError)) this.retryIndex(60_000)
+        throw error
+      }
+    }
+    if (this.indexRequested && !signal.aborted) this.retryIndex(30_000)
+  }
+
+  /** Continue or retry pending batches after a quota-friendly pause.
+   *  在给免费额度留出时间后继续或重试待处理批次。 */
+  private retryIndex(delay: number): void {
+    this.indexTimer = setTimeout(() => { void this.reindex().catch(() => {}) }, delay)
+    this.indexTimer.unref()
+  }
+
+  /** Require the verified runtime library before a vector operation.
+   *  执行向量操作前要求运行库通过验证。 */
+  private async requireLibrary(): Promise<string> {
+    const library = await libraryPath(this.root)
+    this.assertEnabled()
+    if (library === null) throw MemoryError.invalid('Install VLDB before running vector search.')
+    return library
+  }
+
+  /** Index current revisions and reconcile old VLDB candidates. Return the number processed.
+   *  索引当前版本并清理过时的 VLDB 候选，返回本批处理数量。 */
+  private async indexBatch(store: SqliteStore, approval: ApprovedOffer, library: string, project: string | undefined,
+    guard: ReturnType<StructuredMemory['guard']>): Promise<number> {
+    const { offer } = approval
     const model = fingerprint([offer.consent, offer.dimension])
     const pending = store.pending(project, model)
-    // Index a bounded batch per search to avoid a background uploader and respect free quotas.
-    // 每次检索只索引一小批记录，避免后台上传并遵守免费额度。
-    const [vectors, [vector]] = await Promise.all([
-      pending.length === 0 ? Promise.resolve([]) : this.cloud.embed(offer, pending.map(entry => `${entry.title}\n${entry.body}`), 'document', guard),
-      this.cloud.embed(offer, [text], 'query', guard),
-    ])
-    guard.check()
-    if (vector === undefined) throw new Error('OpenVulcan did not return a query embedding.')
+    const vectors = pending.length === 0 ? [] :
+      await this.cloud.embed(offer, pending.map(entry => `${entry.title}\n${entry.body}`), 'document', guard)
     const entries = pending.map((entry, index) => ({ id: entry.id, revision: entry.revision,
       scopeKey: entry.scope === 'project' ? entry.project : entry.scope, embedding: vectors[index]! }))
-    const hits = await this.native({ root: this.root, library, model, project, vector, entries }, signal)
+    guard.check()
+    await this.native({ root: this.root, library, model, project: project ?? '', dimension: offer.dimension, vector: null, entries }, guard.signal)
     guard.check()
     store.acknowledge(model, pending)
+    return pending.length
+  }
+
+  /** Retrieve scoped VLDB matches, then fuse their ranks with local keyword matches.
+   *  先执行范围受限的 VLDB 检索，再融合向量排名和本机词法排名。 */
+  private async retrieve(store: SqliteStore, approval: ApprovedOffer, library: string, project: string,
+    queries: string[], guard: ReturnType<StructuredMemory['guard']>): Promise<RecordEntry[]> {
+    const { offer } = approval
+    const model = fingerprint([offer.consent, offer.dimension])
+    const vectors = await this.cloud.embed(offer, queries, 'query', guard)
+    const ranked = new Map<string, { entry: RecordEntry; score: number }>()
     // Stale and deleted vectors cannot resurrect content. SQLite owns scope, body and revision.
     // 陈旧和已删除的向量无法恢复内容。范围、正文和版本均以 SQLite 为准。
-    const ranked = new Map<string, { entry: RecordEntry; score: number }>()
-    const semanticRows = hits.flatMap(hit => {
-      const entry = store.get(project, hit.id)
-      return entry?.kind === 'memory' && entry.revision === hit.revision ? [entry] : []
-    })
-    for (const rows of [semanticRows, store.search(project, text, 12)]) {
-      rows.forEach((entry, index) => {
-        ranked.set(entry.id, { entry, score: (ranked.get(entry.id)?.score ?? 0) + 1 / (60 + index) })
+    for (const [queryIndex, vector] of vectors.entries()) {
+      guard.check()
+      const hits = await this.native({ root: this.root, library, model, project, dimension: offer.dimension, vector, entries: [] }, guard.signal)
+      guard.check()
+      const semanticRows = hits.flatMap(hit => {
+        const entry = store.get(project, hit.id)
+        return entry?.kind === 'memory' && entry.revision === hit.revision ? [entry] : []
       })
+      for (const [channel, rows] of [semanticRows, store.search(project, queries[queryIndex]!, 12)].entries()) {
+        rows.forEach((entry, rank) => {
+          const score = (ranked.get(entry.id)?.score ?? 0) + (channel === 0 ? 2 : 1) / (60 + rank)
+          ranked.set(entry.id, { entry, score })
+        })
+      }
     }
     return [...ranked.values()].sort((left, right) => right.score - left.score).slice(0, 12).map(hit => hit.entry)
   }
@@ -145,14 +288,15 @@ export class StructuredMemory {
    *  异步操作期间插件卸载或配置切换模式时显式失败。 */
   private assertEnabled(): void {
     this.lifetime.signal.throwIfAborted()
-    if (!this.enabled()) throw MemoryError.invalid('Select SQLite memory mode first.')
+    if (!this.enabled()) throw MemoryError.invalid('Select VMM vector memory mode first.')
   }
 
   /** Validate local approval for a fresh offer before accessing cloud inference.
    *  调用云端推理前校验用户是否同意当前方案。 */
-  private async approved(store: SqliteStore): Promise<ApprovedOffer> {
+  private async approved(store: SqliteStore, automatic = false): Promise<ApprovedOffer> {
     const { grant, revision } = store.consent()
     if (grant === null) throw MemoryError.invalid('Approve the OpenVulcan free memory offer in settings first.')
+    if (automatic && grant.automatic !== true) throw MemoryError.invalid('Approve automatic vector memory first.')
     const offer = await this.cloud.offer()
     if (offer === null) throw MemoryError.invalid('Sign in to OpenVulcan to use the free memory service.')
     const approval = { offer, revision }
@@ -173,7 +317,7 @@ export class StructuredMemory {
   /** Share mode, consent and cancellation checks with asynchronous inference.
    *  将模式、同意和取消检查传入异步推理。 */
   private guard(store: SqliteStore, approval: ApprovedOffer, requestSignal?: AbortSignal) {
-    const signal = requestSignal === undefined ? this.lifetime.signal : AbortSignal.any([this.lifetime.signal, requestSignal])
+    const signal = AbortSignal.any([this.lifetime.signal, this.modeLifetime.signal, ...(requestSignal === undefined ? [] : [requestSignal])])
     return { signal, check: () => { signal.throwIfAborted(); this.assertApproval(store, approval) } }
   }
 

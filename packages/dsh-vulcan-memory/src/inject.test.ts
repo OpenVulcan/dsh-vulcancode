@@ -5,8 +5,10 @@ import { describe, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
+import { Session, SessionId } from '@deepseek-ai/dsh-session'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
 
-import { INITIAL_STATE, SOURCE_KIND, applyEvent, isSubagent, renderMemoryBlock } from './inject.js'
+import { INITIAL_STATE, SOURCE_KIND, applyEvent, clearMarkdownSnapshot, isSubagent, renderMemoryBlock } from './inject.js'
 import { parseSkill } from './index.js'
 
 /** Only the fields `applyEvent` reads; the rest of the event shape is irrelevant here. */
@@ -17,6 +19,19 @@ const compaction = (type: 'compaction/summary' | 'compaction/prune', shadowedSeq
   ({ type, seq: 100, time: 0, data: { shadowedSeqs } }) as unknown as SessionEvent
 
 describe('injection state', () => {
+  test('switching modes clears only the live Markdown snapshot', () => {
+    // Keep the normal user message and the Markdown file-independent session projection.
+    // 保留普通用户消息以及独立于 Markdown 文件的会话投影。
+    const session = Session.create(SessionId('markdown-mode-switch'))
+    const snapshot = session.append('user/message', createUserMessage({
+      source: { kind: SOURCE_KIND, form: 'snapshot', sections: [] }, content: [{ type: 'text', text: 'markdown' }],
+    }), { surfaceOp: 'append' })
+    const user = createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'human' }] })
+    session.append('user/message', user, { surfaceOp: 'append' })
+    clearMarkdownSnapshot(session, applyEvent(INITIAL_STATE, snapshot), 1, 1)
+    assert.deepEqual(session.deriveMessages(), [user])
+    assert.equal(session.snapshotEvents().reduce(applyEvent, INITIAL_STATE).injectedSeq, null)
+  })
   test('records the snapshot message and clears it when a compaction shadows it', () => {
     let state = applyEvent(INITIAL_STATE, userMessage(3, 'user'))
     assert.deepEqual(state, INITIAL_STATE)

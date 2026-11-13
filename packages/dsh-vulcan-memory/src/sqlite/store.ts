@@ -32,7 +32,7 @@ export type RecordEntry = z.infer<typeof recordFields> & z.infer<typeof identity
 
 // Bind consent to a single authorization and the service's advertised revision.
 // 将同意记录绑定到单一授权和服务公布的版本。
-export const consentSchema = z.object({ binding: z.string(), id: z.string(), revision: z.string() })
+export const consentSchema = z.object({ binding: z.string(), id: z.string(), revision: z.string(), automatic: z.literal(true).optional() })
 // Represent the persisted cloud consent.
 // 表示持久化的云端授权同意记录。
 export type Consent = z.infer<typeof consentSchema>
@@ -42,6 +42,13 @@ export type Consent = z.infer<typeof consentSchema>
 interface ConsentState {
   readonly revision: string
   readonly grant: Consent | null
+}
+
+// Carry reviewed additions and the exact old revisions that may be retired with them.
+// 携带已审核的新增记录及可在同一事务中归档的旧记录版本。
+export interface DerivedRecord {
+  readonly record: z.infer<typeof recordFields>
+  readonly supersedes: readonly RecordEntry[]
 }
 
 // Scope predicate shared by reads and mutations. An empty project matches only global records.
@@ -83,6 +90,8 @@ export class SqliteStore {
         CREATE TABLE IF NOT EXISTS vector_candidates (
           model TEXT NOT NULL, id TEXT NOT NULL, revision TEXT NOT NULL, PRIMARY KEY(model,id,revision)
         );
+        CREATE TABLE IF NOT EXISTS distilled_turns (id TEXT PRIMARY KEY);
+        CREATE TABLE IF NOT EXISTS retired_records (id TEXT PRIMARY KEY, value TEXT NOT NULL);
       `)
       return new SqliteStore(db, (value) => jieba.cutForSearch(value.normalize('NFKC').toLowerCase(), true)
         .flatMap(token => token.match(/[\p{L}\p{N}]+/gu) ?? []))
@@ -129,37 +138,85 @@ export class SqliteStore {
     const edit = parsed.data
     this.db.exec('BEGIN IMMEDIATE')
     try {
-      const before = edit.action === 'add' ? undefined : this.get(project, edit.id)
-      if (edit.action !== 'add' && before === undefined) throw new MemoryError('not_found', 'Memory record does not exist in this scope.')
-      if (before !== undefined && edit.action !== 'add' && before.revision !== edit.revision) {
-        throw new MemoryError('revision_mismatch', 'This record changed. Reload it before saving.')
-      }
-      let after: RecordEntry | null = null
-      if (edit.action === 'add') {
-        if (edit.scope === 'project' && project === '') throw MemoryError.invalid('Select a project for project-scoped records.')
-        after = { kind: edit.kind, scope: edit.scope, title: edit.title, body: edit.body,
-          id: randomUUID(), revision: randomUUID(), project: edit.scope === 'project' ? project : '', updated: Date.now() }
-        this.db.prepare('INSERT INTO records VALUES (?,?,?,?,?,?,?,?)')
-          .run(after.id, after.revision, after.scope, after.project, after.kind, after.title, after.body, after.updated)
-      } else {
-        this.db.prepare('DELETE FROM records_fts WHERE id=?').run(edit.id)
-        if (edit.action === 'remove') {
-          this.db.prepare('DELETE FROM records WHERE id=?').run(edit.id)
-          // Keep vector candidates so the native process can remove obsolete rows after a restart.
-          // 保留向量候选登记，供原生进程重启后清理失效行。
-          this.db.prepare('DELETE FROM indexed WHERE id=?').run(edit.id)
-        } else if (before !== undefined) {
-          after = { ...before, title: edit.title, body: edit.body, revision: randomUUID(), updated: Date.now() }
-          this.db.prepare('UPDATE records SET title=?,body=?,revision=?,updated=? WHERE id=?')
-            .run(after.title, after.body, after.revision, after.updated, after.id)
-        }
-      }
-      if (after?.kind === 'memory') {
-        this.db.prepare('INSERT INTO records_fts VALUES (?,?)')
-          .run(after.id, this.tokenize(`${after.title}\n${after.body}`).join(' '))
-      }
+      const after = this.mutate(project, edit)
       this.db.exec('COMMIT')
       return after
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  /** Apply a validated record change within the caller's transaction and return the current row.
+   *  在调用方事务内执行已校验的记录变更，返回当前记录。 */
+  private mutate(project: string, edit: z.infer<typeof mutationSchema>): RecordEntry | null {
+    const before = edit.action === 'add' ? undefined : this.get(project, edit.id)
+    if (edit.action !== 'add' && before === undefined) throw new MemoryError('not_found', 'Memory record does not exist in this scope.')
+    if (before !== undefined && edit.action !== 'add' && before.revision !== edit.revision) {
+      throw new MemoryError('revision_mismatch', 'This record changed. Reload it before saving.')
+    }
+    let after: RecordEntry | null = null
+    if (edit.action === 'add') {
+      if (edit.scope === 'project' && project === '') throw MemoryError.invalid('Select a project for project-scoped records.')
+      after = { kind: edit.kind, scope: edit.scope, title: edit.title, body: edit.body,
+        id: randomUUID(), revision: randomUUID(), project: edit.scope === 'project' ? project : '', updated: Date.now() }
+      this.db.prepare('INSERT INTO records VALUES (?,?,?,?,?,?,?,?)')
+        .run(after.id, after.revision, after.scope, after.project, after.kind, after.title, after.body, after.updated)
+    } else {
+      this.db.prepare('DELETE FROM records_fts WHERE id=?').run(edit.id)
+      if (edit.action === 'remove') {
+        this.db.prepare('DELETE FROM records WHERE id=?').run(edit.id)
+        // Keep vector candidates so the native process can remove obsolete rows after a restart.
+        // 保留向量候选登记，供原生进程重启后清理失效行。
+        this.db.prepare('DELETE FROM indexed WHERE id=?').run(edit.id)
+      } else if (before !== undefined) {
+        after = { ...before, title: edit.title, body: edit.body, revision: randomUUID(), updated: Date.now() }
+        this.db.prepare('UPDATE records SET title=?,body=?,revision=?,updated=? WHERE id=?')
+          .run(after.title, after.body, after.revision, after.updated, after.id)
+      }
+    }
+    if (after?.kind === 'memory') {
+      this.db.prepare('INSERT INTO records_fts VALUES (?,?)')
+        .run(after.id, this.tokenize(`${after.title}\n${after.body}`).join(' '))
+    }
+    return after
+  }
+
+  /** Check whether the exact source turn already committed its reviewed records.
+   *  检查该来源回合是否已提交审核结果。 */
+  hasDistilled(turnId: string): boolean {
+    return this.db.prepare('SELECT 1 FROM distilled_turns WHERE id=?').get(turnId) !== undefined
+  }
+
+  /** Commit one reviewed turn and its index changes atomically, returning false on duplicate delivery.
+   *  原子提交一个已审核回合及其索引变更，重复投递时返回 false。 */
+  commitDistillation(project: string, turnId: string, approvedRevision: string, changes: readonly DerivedRecord[],
+    retire: readonly RecordEntry[]): boolean {
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      if (this.consent().revision !== approvedRevision) throw MemoryError.invalid('The memory consent changed during turn analysis.')
+      const claimed = this.db.prepare('INSERT OR IGNORE INTO distilled_turns VALUES (?)').run(turnId)
+      if (claimed.changes === 0) {
+        this.db.exec('COMMIT')
+        return false
+      }
+      const retired = new Map<string, RecordEntry>()
+      for (const old of [...retire, ...changes.flatMap(change => change.supersedes)]) {
+        if (retired.has(old.id)) throw MemoryError.invalid('The review retired the same record more than once.')
+        retired.set(old.id, old)
+      }
+      for (const old of retired.values()) {
+        this.mutate(project, { action: 'remove', id: old.id, revision: old.revision })
+        this.db.prepare('INSERT INTO retired_records VALUES (?,?)').run(old.id, JSON.stringify(old))
+      }
+      for (const change of changes) {
+        const { record } = change
+        const duplicate = this.db.prepare('SELECT 1 FROM records WHERE kind=? AND scope=? AND project=? AND body=?')
+          .get(record.kind, record.scope, record.scope === 'project' ? project : '', record.body)
+        if (duplicate === undefined) this.mutate(project, mutationSchema.parse({ action: 'add', ...record }))
+      }
+      this.db.exec('COMMIT')
+      return true
     } catch (error) {
       this.db.exec('ROLLBACK')
       throw error
@@ -205,14 +262,14 @@ export class SqliteStore {
 
   /** Return one eligible batch of memory records whose current revision still needs a vector.
    *  返回一批仍需为当前版本生成向量的可访问记忆记录。 */
-  pending(project: string, model: string): RecordEntry[] {
+  pending(project: string | undefined, model: string): RecordEntry[] {
     return this.db.prepare(`
       SELECT records.* FROM records LEFT JOIN indexed
       ON records.id=indexed.id AND indexed.model=? AND records.revision=indexed.revision
       AND EXISTS (SELECT 1 FROM vector_candidates AS candidate
         WHERE candidate.model=indexed.model AND candidate.id=indexed.id AND candidate.revision=indexed.revision)
-      WHERE ${SCOPE} AND records.kind='memory' AND indexed.id IS NULL ORDER BY records.updated,records.id LIMIT 10
-    `).all(model, project) as unknown as RecordEntry[]
+      WHERE (? IS NULL OR ${SCOPE}) AND records.kind='memory' AND indexed.id IS NULL ORDER BY records.updated,records.id LIMIT 10
+    `).all(model, project ?? null, project ?? null) as unknown as RecordEntry[]
   }
 
   /** Record successful indexing only while each indexed revision is still current.

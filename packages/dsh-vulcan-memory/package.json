@@ -1,7 +1,7 @@
 {
   "name": "@openvulcan/dsh-vulcan-memory",
   "version": "0.4.4",
-  "description": "Long-term memory for DeepSeek Harness with Markdown and local SQLite modes, Chinese full-text search, profiles and optional OpenVulcan vector retrieval.",
+  "description": "Long-term memory for DeepSeek Harness with independent Markdown and VMM vector modes, automatic recall and turn distillation, and local VLDB retrieval.",
   "license": "MIT",
   "icon": "./assets/memory-icon.png",
   "repository": {

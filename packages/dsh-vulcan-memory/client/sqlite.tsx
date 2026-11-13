@@ -13,6 +13,7 @@ interface CloudStatus {
   native: 'unsupported' | 'missing' | 'damaged' | 'installed'
   version: string
   approved: boolean
+  automatic: boolean
   hasConsent: boolean
   cloudError: boolean
   offer: {
@@ -20,7 +21,9 @@ interface CloudStatus {
     site: 'cn' | 'global'
     name: string
     profile: boolean
-    providers: { capability: string; model: string; provider: string; region: string; data_policy: string; privacy_url: string }[]
+    precheck: boolean
+    postaction: boolean
+    providers: { capability: string; model: string; provider: string; region: string; data_policy: string; privacy_url: string; purposes?: string[] }[]
   } | null
 }
 
@@ -113,6 +116,7 @@ export function SqlitePage({ t }: { t: Translate }) {
   // Keep cloud metadata visible alongside the corresponding approval controls.
   // 将云端元数据与对应的同意操作一同展示。
   const offer = status?.offer
+  const vectorReady = status?.approved === true && status.native === 'installed'
   const rows = results ?? entries?.slice(0, 50)
   return (
     <>
@@ -130,12 +134,13 @@ export function SqlitePage({ t }: { t: Translate }) {
             {projects.map(item => <option value={item.id} key={item.id}>{item.title}</option>)}
           </select>
         </div>
-        {kind === 'memory' && <form className="vac-inline" onSubmit={event => { event.preventDefault(); void search(false) }}>
+        {kind === 'memory' && <form className="vac-inline" onSubmit={event => { event.preventDefault(); void search(vectorReady) }}>
           <input className="vmm-input" aria-label={t('sql.query')} placeholder={t('sql.query')} value={query} maxLength={4000}
             disabled={busy !== ''} onChange={event => { setQuery(event.target.value) }} />
-          <button type="submit" className="vac-btn sm" disabled={busy !== '' || query.trim() === ''}>{t('sql.keyword')}</button>
-          {status?.approved === true && status.native === 'installed' && <button type="button" className="vac-btn sm"
-            disabled={busy !== '' || query.trim() === ''} onClick={() => { void search(true) }}>{t('sql.semantic')}</button>}
+          <button type="submit" className={`vac-btn sm${vectorReady ? ' primary' : ''}`}
+            disabled={busy !== '' || query.trim() === ''}>{t(vectorReady ? 'sql.semantic' : 'sql.keyword')}</button>
+          {vectorReady && <button type="button" className="vac-btn sm"
+            disabled={busy !== '' || query.trim() === ''} onClick={() => { void search(false) }}>{t('sql.keyword')}</button>}
           {results !== undefined && <button type="button" className="vac-btn sm" onClick={() => { setResults(undefined) }}>{t('sql.clear')}</button>}
         </form>}
         {rows === undefined ? <p className="vac-hint">{t('loading')}</p> : rows.length === 0 ? <p className="vac-hint">{t('nodes.empty')}</p> :
@@ -165,16 +170,29 @@ export function SqlitePage({ t }: { t: Translate }) {
             }}>{t(status.native === 'damaged' ? 'sql.repair' : 'sql.download')}</button>}
           {offer == null ? <p className="vac-hint">{t(status.cloudError ? 'sql.cloudError' : 'sql.noOffer')}</p> : <>
             <strong>{offer.name} · {t(`sql.site.${offer.site}`)}</strong>
-            <ul className="vmm-list">{offer.providers.map(provider => <li key={`${provider.capability}/${provider.provider}/${provider.model}`} className="vmm-row">
+            <ul className="vmm-list">{offer.providers.map(provider => <li key={JSON.stringify(provider)} className="vmm-row">
               <div className="vmm-row-main"><strong>{provider.provider} · {provider.model}</strong>
-                <span className="vac-hint">{provider.region} · {provider.data_policy}</span></div>
+                <span className="vac-hint">{provider.region} · {provider.data_policy}</span>
+                {provider.purposes !== undefined && <span className="vac-hint">{provider.purposes.join(' · ')}</span>}</div>
               <a href={provider.privacy_url} target="_blank" rel="noreferrer">{t('sql.privacy')}</a>
             </li>)}</ul>
             <p className="vac-hint">{t('sql.consentHint')}</p>
-            {status.approved ? <p className="vac-hint">{t('sql.approved')}</p> :
+            {(!offer.precheck || !offer.postaction) && <p className="vac-hint">{t('sql.partialOffer')}</p>}
+            {status.automatic && <p className="vac-hint">{t(status.native === 'installed' ? 'sql.approved' : 'sql.awaitNative')}</p>}
+            {!status.automatic && offer.precheck && offer.postaction &&
               <button type="button" className="vac-btn sm primary" disabled={busy !== ''} onClick={() => {
-                void perform(t('sql.approve'), async () => { await callHost('POST', 'sqlite/consent', offer.consent); await refresh() })
+                void perform(t('sql.approve'), async () => {
+                  await callHost('POST', 'sqlite/consent', { ...offer.consent, automatic: true })
+                  await refresh()
+                })
               }}>{t('sql.approve')}</button>}
+            {!status.approved && (!offer.precheck || !offer.postaction) &&
+              <button type="button" className="vac-btn sm" disabled={busy !== ''} onClick={() => {
+                void perform(t('sql.approveManual'), async () => {
+                  await callHost('POST', 'sqlite/consent', offer.consent)
+                  await refresh()
+                })
+              }}>{t('sql.approveManual')}</button>}
           </>}
           {status.hasConsent && <button type="button" className="vac-btn sm" disabled={busy !== ''} onClick={() => {
             void perform(t('sql.revoke'), async () => { await callHost('POST', 'sqlite/consent', null); await refresh() })

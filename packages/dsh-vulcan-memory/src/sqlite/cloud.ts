@@ -23,6 +23,10 @@ export interface CloudOffer {
   dimension: number
   providers: z.infer<typeof offerSchema>['providers']
   profile: boolean
+  // Indicate whether the free offer supports both stages of the corresponding workflow.
+  // 表示免费方案是否支持对应流程的两个阶段。
+  precheck: boolean
+  postaction: boolean
 }
 
 // Recheck approval at the network boundary after asynchronous credential resolution.
@@ -46,7 +50,7 @@ export function sameConsent(left: Consent | null, right: Consent): boolean {
 
 /** Remove common secret forms before submitting bounded business text.
  *  提交有限长度的业务文本前，移除常见的凭据形式。 */
-function scrub(text: string): string {
+export function scrub(text: string): string {
   return text
     .replace(/-----BEGIN [^-\r\n]*PRIVATE KEY-----[\s\S]*?-----END [^-\r\n]*PRIVATE KEY-----/gi, '[redacted]')
     .replace(/\b(?:Bearer|Auth)\s+[\w.~/+=-]{12,}/gi, '[redacted]')
@@ -75,11 +79,15 @@ export class MemoryCloud {
     if (rows.length !== 1) throw new Error('OpenVulcan returned an invalid default memory offer.')
     const offer = offerSchema.parse(rows[0])
     if (!offer.providers.some(route => route.capability === 'embedding')) throw new Error('The default offer does not provide embeddings.')
-    const providers = offer.providers.filter(route => route.capability === 'embedding'
-      || (route.capability === 'inference' && (route.purposes === undefined || route.purposes.includes('profile_instruction'))))
+    // An inference disclosure without purposes covers all generation stages in contract v1.
+    // 版本 1 契约中，未列出用途的推理披露覆盖全部生成阶段。
+    const providers = offer.providers.filter(route => route.capability === 'embedding' || route.capability === 'inference')
+    const supports = (purpose: string) => providers.some(route => route.capability === 'inference'
+      && (route.purposes === undefined || route.purposes.includes(purpose)))
     return { consent: { binding: this.binding(credential), id: offer.id, revision: offer.consent_revision },
       site: credential.site, name: offer.name, dimension: offer.embedding_dimension, providers,
-      profile: providers.some(route => route.capability === 'inference') }
+      profile: supports('profile_instruction'), precheck: supports('pcl1') && supports('pcl2'),
+      postaction: supports('ptl1') && supports('ptl2') }
   }
 
   /** Embed one batch of documents or queries and verify its order, shape and float32 range.
@@ -125,7 +133,8 @@ export class MemoryCloud {
 
   /** Send the exact approved offer revision using the currently active authorization.
    *  使用当前有效授权发送准确的已同意方案版本。 */
-  private async infer(offer: CloudOffer, purpose: 'embedding' | 'profile_instruction', input: object, guard: InferenceGuard): Promise<unknown> {
+  async infer(offer: CloudOffer, purpose: 'embedding' | 'profile_instruction' | 'pcl1' | 'pcl2' | 'ptl1' | 'ptl2',
+    input: object, guard: InferenceGuard): Promise<unknown> {
     const credential = await this.currentCredential(offer)
     guard.check()
     const response = await this.request(credential, 'infer', {

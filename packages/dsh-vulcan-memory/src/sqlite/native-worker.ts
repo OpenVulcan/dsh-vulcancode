@@ -11,7 +11,8 @@ export interface VectorRequest {
   library: string
   model: string
   project: string
-  vector: number[]
+  dimension: number
+  vector: number[] | null
   entries: { id: string; revision: string; scopeKey: string; embedding: number[] }[]
 }
 
@@ -22,7 +23,7 @@ export const vectorHits = z.array(z.object({ id: z.uuid(), revision: z.uuid() })
 /** Run one scoped upsert and vector search using the pinned VLDB C ABI.
  *  使用固定版本的 VLDB C ABI 执行一次范围受限的向量写入和搜索。 */
 function query(request: VectorRequest): z.infer<typeof vectorHits> {
-  const { root, library, model, project, vector, entries } = request
+  const { root, library, model, project, dimension, vector, entries } = request
   if (!/^[a-f0-9]{64}$/.test(model) || (project !== '' && !/^dshproject-[a-f0-9]{16}$/.test(project))) {
     throw new Error('Invalid vector index identity.')
   }
@@ -79,7 +80,7 @@ function query(request: VectorRequest): z.infer<typeof vectorHits> {
             // 预览版向量表没有清理登记，仅一次性重建其派生向量缓存。
             check(createTable(engine, JSON.stringify({ table_name: table, overwrite_if_exists: true, columns: [
               { name: 'id', column_type: 'string' }, { name: 'revision', column_type: 'string' },
-              { name: 'scopeKey', column_type: 'string' }, { name: 'embedding', column_type: 'vector_float32', vector_dim: vector.length },
+              { name: 'scopeKey', column_type: 'string' }, { name: 'embedding', column_type: 'vector_float32', vector_dim: dimension },
             ] })))
             records.prepare('DELETE FROM indexed WHERE model=?').run(model)
             records.prepare('DELETE FROM vector_candidates WHERE model=?').run(model)
@@ -123,6 +124,10 @@ function query(request: VectorRequest): z.infer<typeof vectorHits> {
             for (const { id, revision } of stale) forget.run(model, id, revision)
           }
         } finally { records.close() }
+        if (vector === null) {
+          db.exec('COMMIT')
+          return []
+        }
         const out: { data?: bigint; len?: number } = {}
         check(search(engine, JSON.stringify({ table_name: table, vector, vector_column: 'embedding', output_format: 'json',
           limit: 24, filter: `scopeKey IN ('user','space','${project}')` }), out))
