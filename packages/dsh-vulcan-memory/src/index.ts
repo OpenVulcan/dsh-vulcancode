@@ -29,23 +29,21 @@ import type {} from '@openvulcan/dsh-vulcan-account'
 import type { AccountSource } from '@openvulcan/openvulcan-account'
 import { z } from 'zod'
 
-import { INITIAL_STATE, PROJECTION_KEY, SOURCE_KIND, applyEvent, clearMarkdownSnapshot, injectionStateSchema, isSubagent, renderMemoryBlock, type InjectionState } from './inject.js'
+import { INITIAL_STATE, PROJECTION_KEY, SOURCE_KIND, applyEvent, injectionStateSchema, isSubagent, renderMemoryBlock, type InjectionState } from './inject.js'
 import { MemoryError } from './markdown/errors.js'
 import * as markdown from './markdown/index.js'
 import * as page from './page.js'
 import { projectContext } from './project.js'
-import { loadSettings } from './settings.js'
+import { loadSettings, type SavedMemorySettings } from './settings.js'
 import { StructuredMemory } from './sqlite/service.js'
 import { consentSchema, mutationSchema } from './sqlite/store.js'
-import { filterSqliteRecallForCompaction, foldSqliteRecall, recallStateSchema, SQLITE_RECALL_PROJECTION, updateSqliteRecall, type RecallState } from './sqlite/recall.js'
+import { foldSqliteRecall, recallStateSchema, SQLITE_RECALL_PROJECTION, updateSqliteRecall, type RecallState } from './sqlite/recall.js'
+import { clearInactiveMemory, filterMemoryForCompaction, foldModeContext, INITIAL_MODE_CONTEXT, MODE_CONTEXT_PROJECTION,
+  modeContextSchema, VMM_SEARCH, VMM_WRITE, type ModeContext } from './mode-context.js'
 import { watchMemoryTools } from './tool-lifecycle.js'
 import { dialogueText, TurnDialogue, type CompletedTurn } from './sqlite/workflow.js'
 import { noiseFor, redactText, textPolicySchema } from './sqlite/text-policy.js'
 
-// Match the VulcanCode VMM tool names while keeping the existing storage and page contracts.
-// 工具名称与 VulcanCode 的 VMM 对齐，并沿用现有存储和页面协议。
-const VMM_SEARCH = 'vmm_memory_search'
-const VMM_WRITE = 'vmm_memory_write'
 const searchInput = z.strictObject({ query: z.string().trim().min(1).max(4000) })
 const writeInput = z.object({ operation: mutationSchema })
 const projectInput = z.object({ projectId: z.string().optional() })
@@ -84,8 +82,10 @@ export async function apply(ctx: Context): Promise<void> {
   // Resolve the shared account through an optional Cordis dependency.
   // 通过 Cordis 可选依赖解析共享账号。
   let account: AccountSource | undefined
-  const structured = new StructuredMemory(path.join(memoryDirectory, 'sqlite'),
-    () => loadSettings(memoryDirectory).mode === 'sqlite', () => account)
+  const structured = new StructuredMemory(path.join(memoryDirectory, 'sqlite'), () => {
+    const settings = loadSettings(memoryDirectory)
+    return settings.mode === 'sqlite' ? settings.activation : undefined
+  }, () => account)
   ctx.effect(() => () => { structured.dispose() })
   /** Trigger incremental vector maintenance without blocking the caller's action.
    *  触发增量向量维护，无需阻塞调用方操作。 */
@@ -150,11 +150,39 @@ export async function apply(ctx: Context): Promise<void> {
     tool(markdown.TOOL_SPECS.search, (resolved, args) => markdown.search(resolved, args)),
     tool(markdown.TOOL_SPECS.write, (resolved, args, agent) => markdown.write(resolved, { session: agent.id, source: 'ai' }, args)),
   ]
+  // The Markdown-only skill shares the same registration lifetime as its tools.
+  // Markdown 专用技能与其工具共用同一注册周期。
+  const curator: SkillProvider = {
+    name: PROVIDER,
+    list: () => Promise.resolve(loadSettings(memoryDirectory).mode !== 'markdown' ? [] : [{
+      name: SKILL_NAME,
+      description: skill.description,
+      invocation: { modelInvocable: true, userInvocable: true },
+      provider: PROVIDER,
+      source: 'vulcan-memory',
+      rank: SKILL_RANK,
+      locator: SKILL_NAME,
+    } satisfies SkillCandidate]),
+    /** Return the bundled instructions only while Markdown is active.
+     *  仅在 Markdown 启用期间返回随包说明。 */
+    async get(candidate) {
+      if (loadSettings(memoryDirectory).mode !== 'markdown') return undefined
+      const { rank: _rank, locator: _locator, ...summary } = candidate
+      return { ...summary, content: skill.body }
+    },
+  }
+  /** Cancel the previous VMM activation before starting maintenance for a newly saved one.
+   *  启动新保存的 VMM 激活周期的维护前，取消上一周期。 */
+  const onActivation = (settings: SavedMemorySettings | undefined) => {
+    structured.modeChanged()
+    if (settings?.mode === 'sqlite') scheduleIndex()
+  }
   const toolLifecycle = watchMemoryTools(memoryDirectory, mode => {
     const disposers: (() => void)[] = []
     try {
       if (mode === 'markdown') {
         for (const definition of markdownTools) disposers.push(ctx.tools.register(definition))
+        disposers.push(ctx.skills.registerProvider(() => curator))
       } else {
         for (const definition of vmmTools) disposers.push(ctx.tools.register(definition, {
           when: ({ agent }) => !isSubagent(agent.session.header),
@@ -165,7 +193,7 @@ export async function apply(ctx: Context): Promise<void> {
       throw error
     }
     return () => { for (const dispose of disposers) dispose() }
-  }, error => ctx.logger.warn(`cannot activate memory tools: ${error instanceof Error ? error.message : String(error)}`))
+  }, error => ctx.logger.warn(`cannot activate memory tools: ${error instanceof Error ? error.message : String(error)}`), onActivation)
   ctx.effect(() => toolLifecycle.dispose)
 
   // VulcanCode hides memory_write in Plan mode and forbids it for subagents; dsh keeps the tool
@@ -201,12 +229,22 @@ export async function apply(ctx: Context): Promise<void> {
   })
   const recallState = (session: Agent['session']): RecallState => isHandle<RecallState>(sqliteRecallProjection)
     ? sqliteRecallProjection.stateOf(session) : (projections.stateOf(session, SQLITE_RECALL_PROJECTION) as RecallState | undefined) ?? []
+  // Reconstruct memory ownership for live and resumed conversations.
+  // 为当前会话和恢复的会话重建记忆上下文归属。
+  const modeContextProjection: unknown = await projections.register<typeof MODE_CONTEXT_PROJECTION, ModeContext>({
+    key: MODE_CONTEXT_PROJECTION, stateVersion: 1, stateSchema: modeContextSchema, init: () => INITIAL_MODE_CONTEXT, apply: foldModeContext,
+  })
+  /** Read the replayed memory context with the installed DSH projection API.
+   *  使用已安装 DSH 的投影 API 读取重放得到的记忆上下文。 */
+  const modeContextState = (session: Agent['session']): ModeContext => isHandle<ModeContext>(modeContextProjection)
+    ? modeContextProjection.stateOf(session)
+    : (projections.stateOf(session, MODE_CONTEXT_PROJECTION) as ModeContext | undefined) ?? INITIAL_MODE_CONTEXT
 
   // Capture only live, completed human turns from the host's committed event feed.
   // 只从宿主已提交的事件流采集正常完成的实时用户回合。
   const dialogues = new WeakMap<Agent['session'], TurnDialogue>()
-  const recentTurns = new WeakMap<Agent['session'], { consentRevision: string; turns: CompletedTurn[] }>()
-  const admittedTurns = new WeakMap<Agent['session'], { turn: number; consentRevision: string }>()
+  const recentTurns = new WeakMap<Agent['session'], { activation: string; consentRevision: string; turns: CompletedTurn[] }>()
+  const admittedTurns = new WeakMap<Agent['session'], { activation: string; turn: number; consentRevision: string }>()
   ctx.on('session/event', (session, event) => {
     let tracker = dialogues.get(session)
     if (event.type === 'turn/start') {
@@ -228,12 +266,14 @@ export async function apply(ctx: Context): Promise<void> {
     dialogues.delete(session)
     const admission = admittedTurns.get(session)
     admittedTurns.delete(session)
-    if (dialogue === undefined || admission?.turn !== event.data.turn || loadSettings(memoryDirectory).mode !== 'sqlite') return
+    if (dialogue === undefined || admission?.turn !== event.data.turn) return
+    const settings = loadSettings(memoryDirectory)
+    if (settings.mode !== 'sqlite' || settings.activation !== admission.activation) return
     const turn = { id: `${session.id}/${event.seq}`, time: event.time, dialogue }
     const recent = recentTurns.get(session)
-    recentTurns.set(session, { consentRevision: admission.consentRevision,
-      turns: [...(recent?.consentRevision === admission.consentRevision ? recent.turns.slice(-1) : []), turn] })
-    void structured.distill(projectContext(session.header.cwd).hostProjectId ?? '', turn, admission.consentRevision).catch((error: unknown) => {
+    recentTurns.set(session, { activation: admission.activation, consentRevision: admission.consentRevision,
+      turns: [...(recent?.activation === admission.activation && recent.consentRevision === admission.consentRevision ? recent.turns.slice(-1) : []), turn] })
+    void structured.distill(projectContext(session.header.cwd).hostProjectId ?? '', turn, admission.consentRevision, admission.activation).catch((error: unknown) => {
       ctx.logger.warn(`cannot distill completed turn: ${error instanceof Error ? error.message : String(error)}`)
     })
   })
@@ -241,7 +281,7 @@ export async function apply(ctx: Context): Promise<void> {
   // Retain one recall per human prompt so intermediate tool steps incur no inference.
   // 每条用户提示只生成一份召回，中间工具步骤不产生额外推理。
   const recallQueries = new WeakMap<Agent['session'], {
-    turn: number; message: string; consentRevision: string; rows: Awaited<ReturnType<StructuredMemory['recall']>>
+    activation: string; turn: number; message: string; consentRevision: string; rows: Awaited<ReturnType<StructuredMemory['recall']>>
   }>()
   ctx.on('agent/pre-step', async ({ agent, signal, turn, step }, next) => {
     const decision = await next()
@@ -250,35 +290,39 @@ export async function apply(ctx: Context): Promise<void> {
     let text: string
     try {
       const settings = loadSettings(memoryDirectory)
-      if (settings.mode !== 'markdown') clearMarkdownSnapshot(session, injectionState(session), turn, step)
+      clearInactiveMemory(session, modeContextState(session), settings.mode, turn, step)
       if (settings.mode === 'sqlite' && !isSubagent(session.header)) {
         const local = await structured.local()
         const project = sqlProject(agent)
         const user = decision.messages.findLast(message => message.source.kind === 'user')
-        const previous = recallQueries.get(session)
+        const cached = recallQueries.get(session)
+        const previous = cached?.activation === settings.activation ? cached : undefined
         const consent = local.consent()
         const inPlan = ctx.get('planMode')?.get(agent).active === true
         let rows: Awaited<ReturnType<StructuredMemory['recall']>> = []
         if (consent.grant?.automatic === true) {
           if (inPlan) admittedTurns.delete(session)
           if (step === 1 && user !== undefined && !inPlan) {
-            admittedTurns.set(session, { turn, consentRevision: consent.revision })
+            admittedTurns.set(session, { activation: settings.activation, turn, consentRevision: consent.revision })
           }
           if (user !== undefined && (previous?.turn !== turn || previous.message !== user.id || previous.consentRevision !== consent.revision)) {
             const recent = recentTurns.get(session)
-            rows = await structured.recall(project, dialogueText(user.content), recent?.consentRevision === consent.revision ? recent.turns : [],
+            rows = await structured.recall(project, dialogueText(user.content),
+              recent?.activation === settings.activation && recent.consentRevision === consent.revision ? recent.turns : [],
               AbortSignal.any([signal, AbortSignal.timeout(20_000)]))
             if (signal.aborted) return decision
-            recallQueries.set(session, { turn, message: user.id, consentRevision: consent.revision, rows })
+            recallQueries.set(session, { activation: settings.activation, turn, message: user.id, consentRevision: consent.revision, rows })
           } else if (previous?.turn === turn && previous.consentRevision === consent.revision) {
             rows = previous.rows
           }
         } else admittedTurns.delete(session)
         if (signal.aborted) return decision
-        if (local.consent().revision !== consent.revision || loadSettings(memoryDirectory).mode !== 'sqlite') {
+        const currentSettings = loadSettings(memoryDirectory)
+        if (local.consent().revision !== consent.revision || currentSettings.activation !== settings.activation) {
           rows = []
           recallQueries.delete(session)
           admittedTurns.delete(session)
+          clearInactiveMemory(session, modeContextState(session), currentSettings.mode, turn, step)
         }
         const selected = rows.filter(record => local.get(project, record.id)?.revision === record.revision).map(({ id, revision, kind, scope, title, body }) =>
           ({ id, revision, kind, scope, title, body: body.slice(0, 640) }))
@@ -295,7 +339,10 @@ export async function apply(ctx: Context): Promise<void> {
       if (resolved === undefined) return decision
       text = renderMemoryBlock(guide, markdown.snapshot(resolved), state.compacted)
     } catch (error) {
-      if (!signal.aborted) updateSqliteRecall(session, recallState(session), turn, step, '')
+      if (!signal.aborted) {
+        clearInactiveMemory(session, modeContextState(session), 'off', turn, step)
+        updateSqliteRecall(session, recallState(session), turn, step, '')
+      }
       ctx.logger.warn(`cannot read long-term memory: ${error instanceof Error ? error.message : String(error)}`)
       return decision
     }
@@ -308,35 +355,20 @@ export async function apply(ctx: Context): Promise<void> {
     }
   }, { prepend: true })
   ctx.on('llm/stream', (request, next) => {
-    filterSqliteRecallForCompaction(request)
+    filterMemoryForCompaction(request)
     return next()
   }, { prepend: true })
-
-  ctx.skills.registerProvider(() => {
-    const provider: SkillProvider = {
-      name: PROVIDER,
-      list: () => Promise.resolve(loadSettings(memoryDirectory).mode !== 'markdown' ? [] : [{
-        name: SKILL_NAME,
-        description: skill.description,
-        invocation: { modelInvocable: true, userInvocable: true },
-        provider: PROVIDER,
-        source: 'vulcan-memory',
-        rank: SKILL_RANK,
-        locator: SKILL_NAME,
-      } satisfies SkillCandidate]),
-      async get(candidate) {
-        const { rank: _rank, locator: _locator, ...summary } = candidate
-        return { ...summary, content: skill.body }
-      },
-    }
-    return provider
-  })
 
   ctx.inject(['connection', 'workspaceRegistry'], (child) => {
     const hosts = (): page.HostProject[] => child.workspaceRegistry.list().map(page.hostProjectOf)
     // Resolve requested project IDs through the host registry.
     // 通过主机项目注册表解析请求中的项目标识。
     const scoped = (id: string | undefined): string => page.resolveHost(hosts(), id)?.id ?? ''
+    /** Check the saved mode after reading the body, immediately before accessing Markdown data.
+     *  读取请求正文后、访问 Markdown 数据前立即检查已保存模式。 */
+    const requireMarkdown = (): void => {
+      if (loadSettings(memoryDirectory).mode !== 'markdown') throw MemoryError.invalid('Select Markdown memory mode first.')
+    }
     const routes: readonly (readonly ['GET' | 'POST', string, Handler])[] = [
       ['GET', 'sqlite/records', async (_request, url) => {
         const project = scoped(param(url, 'projectId'))
@@ -379,36 +411,52 @@ export async function apply(ctx: Context): Promise<void> {
         return structured.draft(scope, text, request.signal)
       }],
       ['GET', 'overview', async (_request, url) => {
+        requireMarkdown()
         const all = hosts()
         return page.loadOverview(store, all, page.resolveHost(all, param(url, 'projectId')), param(url, 'memoryProjectId'))
       }],
       ['POST', 'write', async (request) => {
         const input = page.fields(await readJson(request), ['projectId', 'memoryProjectId', 'operations'])
+        requireMarkdown()
         const all = hosts()
         return page.writeAsUser(store, all, page.resolveHost(all, page.optionalText(input, 'projectId')), page.optionalText(input, 'memoryProjectId'), input['operations'])
       }],
-      ['GET', 'file', async (_request, url) => page.readFile(store, page.scopeParam(url.searchParams.get('scope')), param(url, 'memoryProjectId'))],
+      ['GET', 'file', async (_request, url) => {
+        requireMarkdown()
+        return page.readFile(store, page.scopeParam(url.searchParams.get('scope')), param(url, 'memoryProjectId'))
+      }],
       ['POST', 'file', async (request) => {
         const input = page.fields(await readJson(request), ['scope', 'memoryProjectId', 'expected', 'text'])
+        requireMarkdown()
         return page.replaceFile(store, page.scopeParam(input['scope']), page.optionalText(input, 'memoryProjectId'), page.text(input, 'expected'), page.text(input, 'text'))
       }],
       ['POST', 'project', async (request) => {
         const action = page.parseProjectAction(await readJson(request))
+        requireMarkdown()
         return page.applyProjectAction(store, page.resolveHost(hosts(), page.actionHostId(action)), action)
       }],
       ['GET', 'settings', async () => page.settingsView(loadSettings(memoryDirectory))],
       ['POST', 'settings', async (request) => {
         const settings = page.parseSettingsSave(await readJson(request))
-        const previousMode = loadSettings(memoryDirectory).mode
         page.saveSettings(memoryDirectory, settings)
-        if (previousMode !== settings.mode) structured.modeChanged()
         toolLifecycle.refresh()
-        if (previousMode !== settings.mode && settings.mode === 'sqlite') scheduleIndex()
         return page.settingsView(settings)
       }],
-      ['POST', 'export', async request => page.exportRequest(store, await readJson(request))],
-      ['POST', 'import/preview', async request => page.previewRequest(store, await readJson(request))],
-      ['POST', 'import', async request => page.importRequest(store, await readJson(request))],
+      ['POST', 'export', async request => {
+        const input = await readJson(request)
+        requireMarkdown()
+        return page.exportRequest(store, input)
+      }],
+      ['POST', 'import/preview', async request => {
+        const input = await readJson(request)
+        requireMarkdown()
+        return page.previewRequest(store, input)
+      }],
+      ['POST', 'import', async request => {
+        const input = await readJson(request)
+        requireMarkdown()
+        return page.importRequest(store, input)
+      }],
     ]
     // dsh accepts one registration per exact path, so a path's methods share one route.
     for (const [route, byMethod] of groupRoutes(routes)) {

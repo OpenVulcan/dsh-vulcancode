@@ -19,6 +19,7 @@ const hitsSchema = z.object({ hits: z.array(z.object({ id: z.uuid(), revision: z
 interface ApprovedOffer {
   readonly offer: CloudOffer
   readonly revision: string
+  readonly activation: string
 }
 
 /** Manage vector memory and consent-gated access to the free cloud service.
@@ -45,7 +46,7 @@ export class StructuredMemory {
 
   /** Receive the private data root and functions for checking current mode and account.
    *  接收私有数据根目录，以及查询当前模式和账号的函数。 */
-  constructor(private root: string, private enabled: () => boolean, account: () => AccountSource | undefined) {
+  constructor(private root: string, private activeActivation: () => string | undefined, account: () => AccountSource | undefined) {
     this.cloud = new MemoryCloud(account)
   }
 
@@ -62,31 +63,34 @@ export class StructuredMemory {
   modeChanged(): void {
     this.modeLifetime.abort()
     clearTimeout(this.indexTimer)
+    this.indexing = undefined
+    this.indexRequested = false
     this.modeLifetime = new AbortController()
   }
 
   /** Get the lazy SQLite store while the mode remains selected.
    *  在当前仍选择 SQLite 模式时获取延迟打开的数据库。 */
   async local(): Promise<SqliteStore> {
-    this.assertEnabled()
+    const activation = this.assertEnabled()
     this.store ??= SqliteStore.open(this.root).catch((error: unknown) => {
       this.store = undefined
       throw error
     })
     const store = await this.store
-    this.assertEnabled()
+    this.assertEnabled(activation)
     return store
   }
 
   /** Return installed native status and the free offer's approval state.
    *  返回原生库安装状态和免费方案的同意状态。 */
   async status() {
+    const activation = this.assertEnabled()
     const store = await this.local()
     let cloudError = false
     const [native, offer] = await Promise.all([
       nativeStatus(this.root), this.cloud.offer().catch(() => { cloudError = true; return null }),
     ])
-    this.assertEnabled()
+    this.assertEnabled(activation)
     const { grant } = store.consent()
     return { native, version: NATIVE_VERSION, offer, cloudError,
       approved: offer !== null && sameConsent(grant, offer.consent),
@@ -103,7 +107,10 @@ export class StructuredMemory {
   /** Save the policy and invalidate pending work under the old privacy rules.
    *  保存策略并使旧隐私规则下的待处理工作失效。 */
   async saveTextPolicy(policy: TextPolicy): Promise<void> {
-    (await this.local()).saveTextPolicy(policy)
+    const activation = this.assertEnabled()
+    const store = await this.local()
+    this.assertEnabled(activation)
+    store.saveTextPolicy(policy)
   }
 
   /** Download the runtime on explicit request, deduplicating requests within this process.
@@ -117,11 +124,12 @@ export class StructuredMemory {
   /** Save the reviewed default offer or immediately revoke the stored approval.
    *  保存已审阅的默认方案同意记录，或立即撤销现有同意。 */
   async consent(review: Consent | null): Promise<void> {
+    const activation = this.assertEnabled()
     const store = await this.local()
     const revision = store.beginConsentChange(review === null)
     if (review === null) return
     const offer = await this.cloud.offer()
-    this.assertEnabled()
+    this.assertEnabled(activation)
     if (offer === null || !sameConsent(review, offer.consent)) throw MemoryError.invalid('Refresh and review the current free memory offer.')
     if (review.automatic === true && (!offer.precheck || !offer.postaction)) {
       throw MemoryError.invalid('The free offer must support both recall and turn distillation.')
@@ -142,9 +150,11 @@ export class StructuredMemory {
   /** Combine local keyword hits with an explicit semantic search and return current SQLite rows.
    *  合并本地关键词命中和显式语义检索，返回当前 SQLite 记录。 */
   async search(project: string, text: string, semantic: boolean, signal?: AbortSignal, automatic = false): Promise<RecordEntry[]> {
+    const activation = this.assertEnabled()
     const store = await this.local()
     if (!semantic) return store.search(project, text, 12)
     const library = await this.requireLibrary()
+    this.assertEnabled(activation)
     const approval = await this.approved(store, automatic)
     const guard = this.guard(store, approval, signal)
     await this.indexBatch(store, approval, library, project, guard)
@@ -154,11 +164,13 @@ export class StructuredMemory {
   /** Recall approved vector memory and active profiles for one live human turn.
    *  为一个正在进行的用户回合召回经授权的向量记忆和活跃画像。 */
   async recall(project: string, text: string, recent: readonly CompletedTurn[], signal: AbortSignal): Promise<RecordEntry[]> {
+    const activation = this.assertEnabled()
     const store = await this.local()
     if (store.consent().grant?.automatic !== true) return []
     const profiles = store.list(project, 'profile', 6)
     if (text.trim() === '' || store.list(project, 'memory', 1).length === 0) return profiles
     const library = await libraryPath(this.root)
+    this.assertEnabled(activation)
     if (library === null) return profiles
     const approval = await this.approved(store, true)
     const guard = this.guard(store, approval, signal)
@@ -173,21 +185,25 @@ export class StructuredMemory {
   /** Write a manual change first, so unavailable inference never loses the record.
    *  先保存手工修改，确保推理不可用时记录仍能保留。 */
   async write(project: string, input: unknown): Promise<RecordEntry | null> {
-    return (await this.local()).write(project, input)
+    const activation = this.assertEnabled()
+    const store = await this.local()
+    this.assertEnabled(activation)
+    return store.write(project, input)
   }
 
   /** Queue a committed turn for extraction, review and one atomic revision-checked write.
    *  将已提交回合排入提取和审核队列，并进行一次带版本检查的原子写入。 */
-  distill(project: string, turn: CompletedTurn, consentRevision: string): Promise<void> {
+  distill(project: string, turn: CompletedTurn, consentRevision: string, activation = this.assertEnabled()): Promise<void> {
     if (this.pendingReviews >= 8) return Promise.reject(new Error('The memory review queue is full.'))
     this.pendingReviews++
     const signal = this.modeLifetime.signal
     const work = this.reviews.then(async () => {
-      if (signal.aborted || !this.enabled()) return
+      if (signal.aborted || this.activeActivation() !== activation) return
       const store = await this.local()
       if (store.hasDistilled(turn.id) || store.consent().revision !== consentRevision) return
       const library = await libraryPath(this.root)
       if (library === null) return
+      this.assertEnabled(activation)
       const approval = await this.approved(store, true)
       if (approval.revision !== consentRevision) return
       if (!approval.offer.postaction) return
@@ -248,7 +264,12 @@ export class StructuredMemory {
   reindex(): Promise<void> {
     clearTimeout(this.indexTimer)
     this.indexRequested = true
-    this.indexing ??= this.drainIndex().finally(() => { this.indexing = undefined })
+    if (this.indexing === undefined) {
+      const work = this.drainIndex().finally(() => {
+        if (this.indexing === work) this.indexing = undefined
+      })
+      this.indexing = work
+    }
     return this.indexing
   }
 
@@ -256,17 +277,20 @@ export class StructuredMemory {
    *  每次触发最多处理五批，避免大型历史库占满免费额度。 */
   private async drainIndex(): Promise<void> {
     const signal = this.modeLifetime.signal
+    const activation = this.activeActivation()
     for (let batch = 0; batch < 5 && this.indexRequested; batch++) {
       this.indexRequested = false
-      if (signal.aborted || !this.enabled()) return
+      if (signal.aborted || activation === undefined || this.activeActivation() !== activation) return
       try {
         const store = await this.local()
         if (store.consent().grant?.automatic !== true) return
         const library = await libraryPath(this.root)
         if (library === null) return
+        this.assertEnabled(activation)
         const approval = await this.approved(store, true)
         const guard = this.guard(store, approval, signal)
         const indexed = await this.indexBatch(store, approval, library, undefined, guard)
+        if (signal.aborted) return
         this.indexRequested ||= indexed === 10
       } catch (error) {
         if (!signal.aborted && !(error instanceof MemoryError)) this.retryIndex(60_000)
@@ -340,20 +364,25 @@ export class StructuredMemory {
 
   /** Fail if the plugin unloaded or the profile switched modes during an async operation.
    *  异步操作期间插件卸载或配置切换模式时显式失败。 */
-  private assertEnabled(): void {
+  private assertEnabled(expected?: string): string {
     this.lifetime.signal.throwIfAborted()
-    if (!this.enabled()) throw MemoryError.invalid('Select VMM vector memory mode first.')
+    const activation = this.activeActivation()
+    if (activation === undefined || (expected !== undefined && activation !== expected)) {
+      throw MemoryError.invalid('VMM vector memory is inactive or the memory mode changed.')
+    }
+    return activation
   }
 
   /** Validate local approval for a fresh offer before accessing cloud inference.
    *  调用云端推理前校验用户是否同意当前方案。 */
   private async approved(store: SqliteStore, automatic = false): Promise<ApprovedOffer> {
+    const activation = this.assertEnabled()
     const { grant, revision } = store.consent()
     if (grant === null) throw MemoryError.invalid('Approve the OpenVulcan free memory offer in settings first.')
     if (automatic && grant.automatic !== true) throw MemoryError.invalid('Approve automatic vector memory first.')
     const offer = await this.cloud.offer()
     if (offer === null) throw MemoryError.invalid('Sign in to OpenVulcan to use the free memory service.')
-    const approval = { offer, revision }
+    const approval = { offer, revision, activation }
     this.assertApproval(store, approval)
     return approval
   }
@@ -361,7 +390,7 @@ export class StructuredMemory {
   /** Check mode and consent again across async boundaries.
    *  跨越异步边界后再次检查模式和同意记录。 */
   private assertApproval(store: SqliteStore, approval: ApprovedOffer): void {
-    this.assertEnabled()
+    this.assertEnabled(approval.activation)
     const { grant, revision } = store.consent()
     if (revision !== approval.revision || !sameConsent(grant, approval.offer.consent)) {
       throw MemoryError.invalid('Review and approve the current free memory offer.')

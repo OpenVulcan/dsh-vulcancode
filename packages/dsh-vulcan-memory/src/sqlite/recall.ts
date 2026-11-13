@@ -1,5 +1,5 @@
 import { createDeveloperMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { GenerateOptions, UserMessage } from '@deepseek-ai/dsh-llm'
+import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import { z } from 'zod'
 
@@ -37,16 +37,6 @@ export function foldSqliteRecall(state: RecallState, event: SessionEvent): Recal
   const operation = event.surfaceOp
   const replaced = operation === 'append' ? undefined : operation.startSeq
   return [...state.filter(slot => slot.seq !== replaced), { seq: event.seq, text }]
-}
-
-/** Remove refreshable memory from an auxiliary compaction request before it becomes summary text.
- *  在可刷新的记忆被写入摘要前，从辅助压缩请求中移除它。 */
-export function filterSqliteRecallForCompaction(request: GenerateOptions<string>): void {
-  // The DSH compactor constructs a mutable auxiliary request. Ordinary conversation requests
-  // retain their frozen message list and the current recall.
-  // DSH 压缩器构造可变的辅助请求。普通对话请求保留冻结的消息列表和当前召回。
-  if (request.purpose !== 'compaction') return
-  request.messages = request.messages.filter(message => !('source' in message) || message.source.kind !== SQLITE_RECALL_SOURCE)
 }
 
 /** Keep one current recall on the session surface. Return a message for normal admission only

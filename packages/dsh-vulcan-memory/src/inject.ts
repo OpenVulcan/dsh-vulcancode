@@ -7,9 +7,8 @@
 
 import { z } from 'zod'
 
-import { createDeveloperMessage } from '@deepseek-ai/dsh-llm'
 import type { ContextFormed } from '@deepseek-ai/dsh-llm'
-import type { Session, SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
+import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-compaction'
 import type {} from '@deepseek-ai/dsh-session-projection'
 
@@ -38,7 +37,10 @@ export function applyEvent(state: InjectionState, event: SessionEvent): Injectio
   if (event.type === 'user/message') {
     return event.data.source.kind === SOURCE_KIND ? { ...state, injectedSeq: event.seq } : state
   }
-  if (event.type === 'developer/message' && event.data.message.source.kind === SOURCE_KIND) {
+  // Only a replacement of the snapshot itself clears its projection entry.
+  // 只有替换快照本身时，才清除对应的投影记录。
+  if (event.type === 'developer/message' && event.data.message.source.kind === SOURCE_KIND
+    && event.surfaceOp !== 'append' && event.surfaceOp.startSeq === state.injectedSeq) {
     return { ...state, injectedSeq: null }
   }
   if (event.type === 'compaction/summary' || event.type === 'compaction/prune') {
@@ -46,16 +48,6 @@ export function applyEvent(state: InjectionState, event: SessionEvent): Injectio
     if (injected !== null && event.data.shadowedSeqs.some(seq => seq === injected)) return { injectedSeq: null, compacted: true }
   }
   return state
-}
-
-/** Hide the old Markdown snapshot on a mode change without altering conversation messages.
- *  切换模式时隐藏旧 Markdown 快照，保留普通对话消息。 */
-export function clearMarkdownSnapshot(session: Session, state: InjectionState, turn: number, step: number): void {
-  const seq = session.surface.nodes.find(node => node === state.injectedSeq)
-  if (seq === undefined) return
-  session.append('developer/message', { turn, step, message: createDeveloperMessage({
-    source: { kind: SOURCE_KIND, form: 'snapshot', sections: [] }, content: [],
-  }) }, { surfaceOp: { op: 'replace', startSeq: seq, endSeq: seq }, sourceEventSeqs: [seq] })
 }
 
 /** Subagents never see or write long-term memory, as in VulcanCode. */

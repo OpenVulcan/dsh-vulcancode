@@ -27,7 +27,7 @@ export const zh = {
   'detail.project': '单个项目的事实。基础区全文注入，其余只注入标题。',
 
   'mode.title': '记忆模式',
-  'mode.hint': '所有项目共用当前记忆模式。VMM 在对话前召回相关记忆，Markdown 在新会话或上下文压缩后注入快照。',
+  'mode.hint': '所有项目共用一个记忆模式。保存后，下次请求使用所选模式，两套记忆数据各自保留。',
   'mode.off': '关闭',
   'mode.offHint': '不注入也不写入长期记忆。',
   'mode.sqlite': 'VMM 向量记忆',
@@ -232,7 +232,7 @@ export const en: Record<Key, string> = {
   'detail.project': 'Facts about one project. The base section is injected in full, the rest as titles.',
 
   'mode.title': 'Memory mode',
-  'mode.hint': 'One memory mode serves every project. VMM recalls before a turn. Markdown loads a snapshot for new or compacted conversations.',
+  'mode.hint': 'All projects share one memory mode. The next request uses the saved mode. Each mode keeps its own data.',
   'mode.off': 'Off',
   'mode.offHint': 'No long-term memory is injected or written.',
   'mode.sqlite': 'VMM vector memory',

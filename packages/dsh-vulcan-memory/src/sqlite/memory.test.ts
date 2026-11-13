@@ -73,7 +73,7 @@ test('free profile drafts require approval for the exact default offer and never
   const account = {
     status: async () => ({ signedIn: true }), credential: async () => credential,
   }
-  const service = new StructuredMemory(root, () => true, () => account)
+  const service = new StructuredMemory(root, () => 'fixture', () => account)
   let posts = 0
   // Simulate a new device authorization arriving while a request is in flight.
   // 模拟请求期间设备授权发生切换。
@@ -127,12 +127,15 @@ test('consent revocation supersedes a pending approval and a reapproved grant ca
     access_token: 'fixture-token', expires_at: '2100-01-01T00:00:00Z',
   }
   const account = { status: async () => ({ signedIn: true }), credential: async () => credential }
-  const first = new StructuredMemory(root, () => true, () => account)
-  const second = new StructuredMemory(root, () => true, () => account)
+  // Both processes see the same saved activation identity.
+  // 两个进程观察同一已保存的激活标识。
+  let activation: string | undefined = 'first-vmm'
+  const first = new StructuredMemory(root, () => activation, () => account)
+  const second = new StructuredMemory(root, () => activation, () => account)
   const approvalStarted = Promise.withResolvers<void>()
   const releaseApproval = Promise.withResolvers<void>()
-  const inferenceStarted = Promise.withResolvers<void>()
-  const releaseInference = Promise.withResolvers<void>()
+  let inferenceStarted = Promise.withResolvers<void>()
+  let releaseInference = Promise.withResolvers<void>()
   let delayApproval = false
   t.mock.method(globalThis, 'fetch', async (url: string) => {
     if (url.endsWith('/capabilities')) {
@@ -170,6 +173,16 @@ test('consent revocation supersedes a pending approval and a reapproved grant ca
     await second.consent(offer.consent)
     releaseInference.resolve()
     await oldInference
+    assert.equal((await first.status()).approved, true)
+
+    inferenceStarted = Promise.withResolvers<void>()
+    releaseInference = Promise.withResolvers<void>()
+    const beforeSwitch = assert.rejects(first.draft('user', 'Fixture'), /mode changed/)
+    await inferenceStarted.promise
+    activation = undefined
+    activation = 'second-vmm'
+    releaseInference.resolve()
+    await beforeSwitch
     assert.equal((await first.status()).approved, true)
   } finally {
     first.dispose()

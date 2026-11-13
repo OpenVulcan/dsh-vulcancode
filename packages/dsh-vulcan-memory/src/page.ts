@@ -106,7 +106,7 @@ export function resolveHost(hosts: readonly HostProject[], projectId: string | u
 }
 
 export function settingsView(settings: MemorySettings): MemorySettingsView {
-  return { ...settings, defaultBudget: DEFAULT_BUDGET, maxPartTokens: MAX_PART_TOKENS, warningPercent: BUDGET_WARNING_PERCENT }
+  return { mode: settings.mode, budget: settings.budget, defaultBudget: DEFAULT_BUDGET, maxPartTokens: MAX_PART_TOKENS, warningPercent: BUDGET_WARNING_PERCENT }
 }
 
 export function loadOverview(store: MarkdownMemoryStore, hosts: readonly HostProject[], host: HostProject | undefined, memoryProjectId: string | undefined): MemoryOverview {

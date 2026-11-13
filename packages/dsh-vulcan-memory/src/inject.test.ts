@@ -8,7 +8,8 @@ import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 
-import { INITIAL_STATE, SOURCE_KIND, applyEvent, clearMarkdownSnapshot, isSubagent, renderMemoryBlock } from './inject.js'
+import { INITIAL_STATE, SOURCE_KIND, applyEvent, isSubagent, renderMemoryBlock } from './inject.js'
+import { clearInactiveMemory, foldModeContext, INITIAL_MODE_CONTEXT } from './mode-context.js'
 import { parseSkill } from './index.js'
 
 /** Only the fields `applyEvent` reads; the rest of the event shape is irrelevant here. */
@@ -28,7 +29,7 @@ describe('injection state', () => {
     }), { surfaceOp: 'append' })
     const user = createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'human' }] })
     session.append('user/message', user, { surfaceOp: 'append' })
-    clearMarkdownSnapshot(session, applyEvent(INITIAL_STATE, snapshot), 1, 1)
+    clearInactiveMemory(session, foldModeContext(INITIAL_MODE_CONTEXT, snapshot), 'sqlite', 1, 1)
     assert.deepEqual(session.deriveMessages(), [user])
     assert.equal(session.snapshotEvents().reduce(applyEvent, INITIAL_STATE).injectedSeq, null)
   })

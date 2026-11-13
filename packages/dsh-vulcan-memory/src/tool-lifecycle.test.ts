@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
-import { DEFAULT_SETTINGS, saveSettings, SETTINGS_FILE } from './settings.js'
+import { DEFAULT_SETTINGS, loadSettings, saveSettings, SETTINGS_FILE } from './settings.js'
 import { watchMemoryTools } from './tool-lifecycle.js'
 
 test('mode changes register and withdraw tools even without a host activation predicate', async () => {
@@ -23,6 +23,12 @@ test('mode changes register and withdraw tools even without a host activation pr
     lifecycle.refresh()
     lifecycle.refresh()
     assert.deepEqual([...active], ['sqlite'])
+    const firstActivation = loadSettings(root).activation
+    saveSettings(root, { ...DEFAULT_SETTINGS, mode: 'sqlite' })
+    assert.equal(loadSettings(root).activation, firstActivation)
+    saveSettings(root, DEFAULT_SETTINGS)
+    saveSettings(root, { ...DEFAULT_SETTINGS, mode: 'sqlite' })
+    assert.notEqual(loadSettings(root).activation, firstActivation)
     await writeFile(path.join(root, SETTINGS_FILE), '{')
     lifecycle.refresh()
     assert.equal(active.size, 0)
