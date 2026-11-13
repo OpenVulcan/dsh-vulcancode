@@ -177,7 +177,7 @@ export class StructuredMemory {
     guard.check()
     if (!approval.offer.precheck) return profiles
     const memories = await precheck(text, recent, (purpose, input) => this.cloud.infer(approval.offer, purpose, input, guard),
-      queries => this.retrieve(store, approval, library, project, queries, guard), value => scrub(value, guard.region))
+      queries => this.retrieve(store, approval, library, project, queries, guard), value => scrub(value, guard.pii))
     guard.check()
     return [...profiles, ...memories].filter(record => store.get(project, record.id)?.revision === record.revision)
   }
@@ -219,7 +219,7 @@ export class StructuredMemory {
         queries => this.retrieve(store, approval, library, project, queries, guard))
       guard.check()
       const changes = result.changes.map(change => ({ ...change, record: { ...change.record,
-        title: scrub(change.record.title, guard.region).slice(0, 160), body: scrub(change.record.body, guard.region).slice(0, 4_000) } }))
+        title: scrub(change.record.title, guard.pii).slice(0, 160), body: scrub(change.record.body, guard.pii).slice(0, 4_000) } }))
       store.commitDistillation(project, turn.id, approval.revision, changes, result.retire)
       if (result.changes.some(change => change.record.kind === 'memory') || result.retire.length > 0) {
         await this.indexBatch(store, approval, library, project, guard)
@@ -236,7 +236,7 @@ export class StructuredMemory {
     // Timeline turns retain mixed evidence. Only simple turns use the intake filter.
     // 时间线回合保留混合证据，仅简单回合经过准入过滤。
     if (!policy.noise || turn.dialogue.timeline.length > 0) return false
-    const user = scrub(turn.dialogue.user, guard.region).trim()
+    const user = scrub(turn.dialogue.user, guard.pii).trim()
     const rules = noiseFor(user)
     if (rules.some(rule => rule.regex.some(regex => regex.test(user)))) return true
     if (!policy.semanticNoise || user === '') return false
@@ -321,7 +321,7 @@ export class StructuredMemory {
   private async indexBatch(store: SqliteStore, approval: ApprovedOffer, library: string, project: string | undefined,
     guard: ReturnType<StructuredMemory['guard']>): Promise<number> {
     const { offer } = approval
-    const model = fingerprint([offer.consent, offer.dimension, 'pii-v2', guard.region])
+    const model = fingerprint([offer.consent, offer.dimension, guard.pii.digest])
     const pending = store.pending(project, model)
     const vectors = pending.length === 0 ? [] :
       await this.cloud.embed(offer, pending.map(entry => `${entry.title}\n${entry.body}`), 'document', guard)
@@ -339,7 +339,7 @@ export class StructuredMemory {
   private async retrieve(store: SqliteStore, approval: ApprovedOffer, library: string, project: string,
     queries: string[], guard: ReturnType<StructuredMemory['guard']>): Promise<RecordEntry[]> {
     const { offer } = approval
-    const model = fingerprint([offer.consent, offer.dimension, 'pii-v2', guard.region])
+    const model = fingerprint([offer.consent, offer.dimension, guard.pii.digest])
     const vectors = await this.cloud.embed(offer, queries, 'query', guard)
     const ranked = new Map<string, { entry: RecordEntry; score: number }>()
     // Stale and deleted vectors cannot resurrect content. SQLite owns scope, body and revision.
@@ -401,7 +401,7 @@ export class StructuredMemory {
    *  将模式、同意和取消检查传入异步推理。 */
   private guard(store: SqliteStore, approval: ApprovedOffer, requestSignal?: AbortSignal) {
     const signal = AbortSignal.any([this.lifetime.signal, this.modeLifetime.signal, ...(requestSignal === undefined ? [] : [requestSignal])])
-    return { signal, region: store.textPolicy().region, check: () => { signal.throwIfAborted(); this.assertApproval(store, approval) } }
+    return { signal, pii: store.pii(), check: () => { signal.throwIfAborted(); this.assertApproval(store, approval) } }
   }
 
   /** Run one isolated FFI process and resolve validated hits within a fixed deadline.

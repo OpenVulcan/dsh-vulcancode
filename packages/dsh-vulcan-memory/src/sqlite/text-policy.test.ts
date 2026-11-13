@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { noiseFor, redactPayload, redactText, similarity } from './text-policy.js'
+import { compilePii, defaultPii, piiRegions, piiSnapshot } from './pii.js'
 
 test('bundled regional PII rules preserve ordinary text and mask matching identifiers', () => {
   // Use synthetic values to exercise each bundled region and the shared Luhn rule.
@@ -18,9 +19,50 @@ test('bundled regional PII rules preserve ordinary text and mask matching identi
 test('cloud policy masks nested business text while preserving protocol identifiers', () => {
   // Keep opaque fields intact so server selection still matches local records.
   // 保留不透明字段，使服务端选择可继续映射本机记录。
-  const input = { turn_id: '000-12-3456', target_turn: { raw_turn: { user: '000-12-3456', assistant: 'Test.' } } }
+  const input = { turn_id: 'fixture-session/17', target_turn: { raw_turn: { user: '000-12-3456', assistant: 'Test.' } } }
   assert.deepEqual(redactPayload(input, 'en-US'),
     { turn_id: input.turn_id, target_turn: { raw_turn: { user: '[US_SSN_MASKED]', assistant: 'Test.' } } })
+  assert.deepEqual(redactPayload({ turn_id: '000-12-3456' }, 'en-US'), { turn_id: '[US_SSN_MASKED]' })
+})
+
+test('all 36 regions compile and match a distinct synthetic local example', () => {
+  // Samples match the published rule formats without accessing real account data.
+  // 样例符合已发布规则格式，无需读取真实账号数据。
+  const samples = {
+    'ar-AE': '784-2000-1234567-1', 'da-DK': '123456-7890', 'de-DE': 'DE123456789',
+    'en-AU': '123-456-789', 'en-CA': '123-456-789', 'en-GB': 'AB123456C', 'en-IE': '1234567AB',
+    'en-IN': 'ABCDE1234F', 'en-MY': '123456-12-3456', 'en-NZ': '123-456-789', 'en-PH': '123-456-789-000',
+    'en-SG': 'S1234567A', 'en-US': '000-12-3456', 'es-AR': '12.345.678', 'es-CL': '12.345.678-9',
+    'es-ES': '12345678A', 'es-MX': 'AAAA000101HDFBBB01', 'es-PE': '20123456789', 'fi-FI': '010101-123A',
+    'fr-FR': '123 456 789', 'id-ID': '12.345.678.9-123.456', 'it-IT': 'RSSMRA85T10A562S',
+    'ja-JP': '1234-5678-9012', 'ko-KR': '123456-1234567', 'nb-NO': 'NO123456789MVA',
+    'nl-NL': 'NL123456789B01', 'pl-PL': '123-456-78-90', 'pt-BR': '123.456.789-00', 'pt-PT': '123456789',
+    'sv-SE': '123456-7890', 'th-TH': '1-2345-67890-12-3', 'tr-TR': '12345678901', 'vi-VN': '0912345678',
+    'zh-CN': '13800138000', 'zh-HK': 'A123456(7)', 'zh-TW': '0912345678',
+  }
+  assert.deepEqual(piiRegions, Object.keys(samples).sort())
+  for (const [region, sample] of Object.entries(samples)) {
+    const names = new Set(JSON.parse(defaultPii(region)).rules.map((rule: { name: string }) => rule.name))
+    const result = redactText(sample, piiSnapshot(region))
+    assert.ok(result.matches.some(name => names.has(name)), region)
+    assert.equal(redactText('Keep the release notes.', region).text, 'Keep the release notes.', region)
+  }
+})
+
+test('PII overrides retain rule order and count Unicode matches using the source formula', () => {
+  // Replace a common rule in place, then exercise a byte-length and a missing-capture condition.
+  // 原位替换通用规则，再验证字节长度条件与缺失捕获条件。
+  const snapshot = compilePii('en-US',
+    JSON.stringify({ language: 'common', version: '2.0.0', rules: [
+      { name: 'local', pattern: 'x', replacement: 'wrong' },
+      { name: 'second', pattern: 'x', replacement: 'wrong' },
+    ] }),
+    JSON.stringify({ language: 'en-US', version: '2.0.0', rules: [
+      { name: 'local', pattern: '(街)(x)?', replacement: '$1[MASK]', condition: 'len($1) == 3 && len($2) > 0' },
+    ] }))
+  const result = redactText('🧪街x、街', snapshot)
+  assert.equal(result.text, '🧪街[MASK]、街[MASK]')
+  assert.deepEqual(result.redactions, [{ name: 'local', count: 2 }])
 })
 
 test('noise rules use user categories and cosine scores independent of vector length', () => {

@@ -13,6 +13,41 @@ import { StructuredMemory } from './service.js'
 const projectA = 'dshproject-000000000000000a'
 const projectB = 'dshproject-000000000000000b'
 
+test('manual memory and profile edits persist redacted rows and honor live rule revisions', async () => {
+  // Use two connections to verify committed rules and stale editor rejection across processes.
+  // 用两个连接验证跨进程已提交规则和过期编辑器拒绝行为。
+  const root = await mkdtemp(path.join(tmpdir(), 'dsh-sqlite-pii-'))
+  const first = await SqliteStore.open(root)
+  const second = await SqliteStore.open(root)
+  try {
+    const builtin = first.piiFile('en-US')
+    const source = JSON.parse(builtin.source)
+    source.rules.push({ name: 'FIXTURE', pattern: 'fictionalvalue', replacement: '[FIXTURE]' })
+    first.saveTextPolicy({ ...first.textPolicy(), region: 'en-US' })
+    const override = first.savePiiFile('en-US', JSON.stringify(source), builtin.revision)
+    assert.ok(override.revision)
+    assert.throws(() => second.savePiiFile('en-US', null, builtin.revision), /changed/)
+    assert.throws(() => first.savePiiFile('en-US', '{"language":"en-US"}', override.revision), /Invalid/)
+    const record = second.write(projectA, { action: 'add', kind: 'memory', scope: 'project',
+      title: 'SSN 000-12-3456', body: 'Keep fictionalvalue private.' })
+    assert.equal(record?.title, 'SSN [US_SSN_MASKED]')
+    assert.equal(record?.body, 'Keep [FIXTURE] private.')
+    assert.deepEqual(first.search(projectA, 'fictionalvalue', 5), [])
+    const profile = first.write('', { action: 'add', kind: 'profile', scope: 'user', title: 'Contact', body: 'Use an alias' })
+    assert.ok(profile)
+    const edited = second.write('', { action: 'edit', id: profile.id, revision: profile.revision, title: 'Contact',
+      body: 'Email test@example.org' })
+    assert.equal(edited?.body, 'Email [EMAIL_MASKED]')
+    assert.notEqual(second.pii().digest, first.pii('zh-CN').digest)
+    assert.deepEqual(first.savePiiFile('en-US', null, override.revision), builtin)
+    assert.equal(second.piiFile('en-US').source, builtin.source)
+  } finally {
+    first.close()
+    second.close()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('Jieba search and SQLite edits share a project-scoped revision boundary', async () => {
   // Reopen the database to verify both the persisted row and its full-text index.
   // 重新打开数据库，同时验证持久化记录和全文索引。

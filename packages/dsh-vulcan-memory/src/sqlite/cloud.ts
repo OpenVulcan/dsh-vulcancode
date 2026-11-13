@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { SITES, type AccountSource, type Credential } from '@openvulcan/openvulcan-account'
 import { z } from 'zod'
 import type { Consent } from './store.js'
-import { maskBasic, redactPayload, redactText, type TextPolicy } from './text-policy.js'
+import { maskBasic, redactPayload, redactText, type PiiSnapshot } from './pii.js'
 
 // Parse only published fields from the dedicated free memory inference catalog.
 // 只解析专用免费记忆推理目录中公布的字段。
@@ -35,7 +35,7 @@ export interface CloudOffer {
 interface InferenceGuard {
   check(): void
   signal: AbortSignal
-  region: TextPolicy['region']
+  pii: PiiSnapshot
 }
 
 /** Hash structured identities so identifiers cannot become filesystem names or SQL fragments.
@@ -52,8 +52,8 @@ export function sameConsent(left: Consent | null, right: Consent): boolean {
 
 /** Remove common secret forms before submitting bounded business text.
  *  提交有限长度的业务文本前，移除常见的凭据形式。 */
-export function scrub(text: string, region?: TextPolicy['region']): string {
-  return (region === undefined ? maskBasic(text) : redactText(text, region).text).slice(0, 4200)
+export function scrub(text: string, policy?: PiiSnapshot): string {
+  return (policy === undefined ? maskBasic(text) : redactText(text, policy).text).slice(0, 4200)
 }
 
 /** Use the account's regional OpenVulcan memory endpoint and server-selected free offer.
@@ -92,7 +92,7 @@ export class MemoryCloud {
   async embed(offer: CloudOffer, texts: string[], task: 'document' | 'query', guard: InferenceGuard): Promise<number[][]> {
     const result = z.array(z.array(z.number().refine(value => Number.isFinite(Math.fround(value)))).length(offer.dimension))
       .length(texts.length)
-      .parse(await this.infer(offer, 'embedding', { texts: texts.map(text => scrub(text, guard.region)), task }, guard))
+      .parse(await this.infer(offer, 'embedding', { texts, task }, guard))
     if (result.some(vector => !vector.some(value => Math.fround(value) !== 0))) throw new Error('OpenVulcan returned an empty embedding.')
     return result
   }
@@ -107,7 +107,7 @@ export class MemoryCloud {
         instruction: scrub(instruction), authority_floor: { priority: 'P1', level: 'L2', reason: 'User-supplied profile draft' },
         active_nodes: [],
       }, guard))
-    return (result.accepted_nodes ?? []).slice(0, 5).map(node => node.normalized_content)
+    return (result.accepted_nodes ?? []).slice(0, 5).map(node => scrub(node.normalized_content, guard.pii))
   }
 
   /** Bind approval to a site and device authorization without persisting its token.
@@ -136,7 +136,7 @@ export class MemoryCloud {
     guard.check()
     const response = await this.request(credential, 'infer', {
       contract_version: 1, model_id: offer.consent.id, consent_revision: offer.consent.revision, purpose,
-      input: redactPayload(input, guard.region),
+      input: redactPayload(input, guard.pii),
     }, guard.signal)
     await this.currentCredential(offer)
     guard.check()

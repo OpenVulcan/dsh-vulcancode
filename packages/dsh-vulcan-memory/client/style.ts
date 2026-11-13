@@ -93,6 +93,8 @@ body[data-ds-dark-theme] .vac {
 .vmm-input, .vmm-select { height: 28px; padding: 0 calc(var(--vk-u) * 2); }
 .vmm-textarea { padding: calc(var(--vk-u) * 2); resize: vertical; line-height: 1.5; }
 .vmm-textarea.file { font-family: var(--vk-mono); min-height: 360px; }
+.vmm-policy-editor { display: grid; gap: calc(var(--vk-u) * 2); }
+.vmm-textarea.file.vmm-rule-source { min-height: 150px; }
 .vmm-input:focus, .vmm-select:focus, .vmm-textarea:focus { outline: 2px solid var(--vk-signal); outline-offset: -1px; }
 .vmm-input[aria-invalid="true"] { border-color: var(--vk-bad); }
 .vmm-check { display: flex; align-items: center; gap: calc(var(--vk-u) * 2); font-size: 12px; color: var(--vk-ink-2); cursor: pointer; }

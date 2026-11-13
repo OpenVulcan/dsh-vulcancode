@@ -5,6 +5,8 @@ import type { DatabaseSync } from 'node:sqlite'
 import { z } from 'zod'
 import { MemoryError } from '../markdown/errors.js'
 import { DEFAULT_TEXT_POLICY, textPolicySchema, type TextPolicy } from './text-policy.js'
+import { compilePiiFile, defaultPii, piiSelector, piiSnapshot, redactText, type PiiSnapshot } from './pii.js'
+import { RULE_FILE_LIMIT } from './rule-resources.js'
 
 // Validate record edits at both the UI and tool boundaries.
 // 在界面和工具入口统一校验记录变更。
@@ -94,6 +96,10 @@ export class SqliteStore {
         CREATE TABLE IF NOT EXISTS distilled_turns (id TEXT PRIMARY KEY);
         CREATE TABLE IF NOT EXISTS retired_records (id TEXT PRIMARY KEY, value TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS text_policy (singleton INTEGER PRIMARY KEY CHECK(singleton=1), value TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS text_rules (
+          family TEXT NOT NULL, selector TEXT NOT NULL, source TEXT NOT NULL, revision TEXT NOT NULL,
+          PRIMARY KEY(family,selector)
+        );
       `)
       return new SqliteStore(db, (value) => jieba.cutForSearch(value.normalize('NFKC').toLowerCase(), true)
         .flatMap(token => token.match(/[\p{L}\p{N}]+/gu) ?? []))
@@ -112,6 +118,62 @@ export class SqliteStore {
   textPolicy(): TextPolicy {
     const row = this.db.prepare('SELECT value FROM text_policy WHERE singleton=1').get()
     return row === undefined ? DEFAULT_TEXT_POLICY : textPolicySchema.parse(JSON.parse(String(row.value)))
+  }
+
+  /** Read one local override and its revision for a known rule resource.
+   *  读取指定规则资源的本地覆盖及其版本。 */
+  ruleOverride(family: 'pii' | 'noise', selector: string) {
+    return this.db.prepare('SELECT source,revision FROM text_rules WHERE family=? AND selector=?')
+      .get(family, selector) as { source: string; revision: string } | undefined
+  }
+
+  /** Return editable effective PII JSON and its compare-and-swap revision.
+   *  返回可编辑的生效 PII JSON 及其比较交换版本。 */
+  piiFile(selector: string) {
+    const name = piiSelector.parse(selector)
+    const override = this.ruleOverride('pii', name)
+    return { source: override?.source ?? defaultPii(name), revision: override?.revision ?? null }
+  }
+
+  /** Resolve both effective PII files in one SQLite read for an immutable operation snapshot.
+   *  通过单次 SQLite 读取解析两份生效 PII 文件，生成不可变操作快照。 */
+  pii(region = this.textPolicy().region): PiiSnapshot {
+    const overrides = this.db.prepare("SELECT selector,source FROM text_rules WHERE family='pii' AND selector IN ('common',?)")
+      .all(region) as { selector: string; source: string }[]
+    return piiSnapshot(region, overrides.find(row => row.selector === 'common')?.source,
+      overrides.find(row => row.selector === region)?.source)
+  }
+
+  /** Validate a PII override before saving it, or restore the shipped file with null.
+   *  校验后保存 PII 覆盖，或以 null 恢复随包文件。 */
+  savePiiFile(selector: string, source: string | null, expected: string | null) {
+    const name = piiSelector.parse(selector)
+    if (source !== null) {
+      if (Buffer.byteLength(source) > RULE_FILE_LIMIT) throw MemoryError.invalid('The PII rule file is too large.')
+      try { compilePiiFile(name, source) } catch {
+        throw MemoryError.invalid('Invalid PII rules. Check the JSON, language, rule names, patterns and capture references.')
+      }
+    }
+    this.saveRuleOverride('pii', name, source, expected)
+    return this.piiFile(name)
+  }
+
+  /** Commit a validated override only when the editor still holds its current revision.
+   *  仅在编辑器仍持有当前版本时提交已校验的覆盖。 */
+  private saveRuleOverride(family: 'pii' | 'noise', selector: string, source: string | null, expected: string | null): void {
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      if ((this.ruleOverride(family, selector)?.revision ?? null) !== expected) {
+        throw new MemoryError('revision_mismatch', 'The rule file changed. Reload it before saving.')
+      }
+      if (source === null) this.db.prepare('DELETE FROM text_rules WHERE family=? AND selector=?').run(family, selector)
+      else this.db.prepare('INSERT OR REPLACE INTO text_rules VALUES (?,?,?,?)').run(family, selector, source, randomUUID())
+      this.db.prepare('UPDATE consent_revision SET revision=? WHERE singleton=1').run(randomUUID())
+      this.db.exec('COMMIT')
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
   }
 
   /** Persist the validated policy and invalidate work admitted before the change.
@@ -161,7 +223,7 @@ export class SqliteStore {
     const edit = parsed.data
     this.db.exec('BEGIN IMMEDIATE')
     try {
-      const after = this.mutate(project, edit)
+      const after = this.mutate(project, edit, edit.action === 'remove' ? undefined : this.pii())
       this.db.exec('COMMIT')
       return after
     } catch (error) {
@@ -172,13 +234,21 @@ export class SqliteStore {
 
   /** Apply a validated record change within the caller's transaction and return the current row.
    *  在调用方事务内执行已校验的记录变更，返回当前记录。 */
-  private mutate(project: string, edit: z.infer<typeof mutationSchema>): RecordEntry | null {
+  private mutate(project: string, edit: z.infer<typeof mutationSchema>, pii?: PiiSnapshot): RecordEntry | null {
     const before = edit.action === 'add' ? undefined : this.get(project, edit.id)
     if (edit.action !== 'add' && before === undefined) throw new MemoryError('not_found', 'Memory record does not exist in this scope.')
     if (before !== undefined && edit.action !== 'add' && before.revision !== edit.revision) {
       throw new MemoryError('revision_mismatch', 'This record changed. Reload it before saving.')
     }
     let after: RecordEntry | null = null
+    // Redact before writing either the authoritative row or the full-text index.
+    // 在写入权威记录或全文索引前执行脱敏。
+    if (edit.action !== 'remove' && pii !== undefined) {
+      const title = redactText(edit.title, pii).text.slice(0, 160).trim()
+      const body = redactText(edit.body, pii).text.slice(0, 4000).trim()
+      if (title === '' || body === '') throw MemoryError.invalid('The title and body must contain text after redaction.')
+      edit = { ...edit, title, body }
+    }
     if (edit.action === 'add') {
       if (edit.scope === 'project' && project === '') throw MemoryError.invalid('Select a project for project-scoped records.')
       after = { kind: edit.kind, scope: edit.scope, title: edit.title, body: edit.body,

@@ -2,18 +2,22 @@ import { useEffect, useState } from 'react'
 import type { Translate } from './i18n'
 import { Section } from './parts'
 import { callHost, messageOf } from './shared'
+import { RuleEditor } from './rule-editor'
 
 // Keep UI choices aligned with the bundled regional resources.
 // 使界面选项与随包提供的地区规则一致。
-const REGIONS = ['zh-CN', 'zh-TW', 'zh-HK', 'en-US'] as const
-type Policy = { region: typeof REGIONS[number]; noise: boolean; semanticNoise: boolean }
-type Preview = { text: string; matches: string[]; noise: string | null }
+type Policy = { region: string; noise: boolean; semanticNoise: boolean }
+// Display counts for the rules that actually replaced text.
+// 显示实际替换文本的规则次数。
+type Preview = { text: string; redactions: { name: string; count: number }[]; noise: string | null }
 
 /** Display the PII rule set, local preview and automatic distillation noise controls.
  *  展示 PII 规则、本机预览和自动提炼的噪声过滤设置。 */
 export function TextPolicyPanel({ t }: { t: Translate }) {
   const [saved, setSaved] = useState<Policy>()
   const [draft, setDraft] = useState<Policy>()
+  const [regions, setRegions] = useState<string[]>([])
+  const [file, setFile] = useState<'common' | 'region'>('region')
   const [sample, setSample] = useState('')
   const [preview, setPreview] = useState<Preview>()
   const [busy, setBusy] = useState(false)
@@ -21,8 +25,8 @@ export function TextPolicyPanel({ t }: { t: Translate }) {
 
   useEffect(() => {
     let active = true
-    void callHost<Policy>('GET', 'sqlite/text-policy').then(policy => {
-      if (active) { setSaved(policy); setDraft(policy) }
+    void Promise.all([callHost<Policy>('GET', 'sqlite/text-policy'), callHost<string[]>('GET', 'sqlite/pii-regions')]).then(([policy, available]) => {
+      if (active) { setSaved(policy); setDraft(policy); setRegions(available) }
     }, (failure: unknown) => { if (active) setError(messageOf(failure)) })
     return () => { active = false }
   }, [])
@@ -47,12 +51,22 @@ export function TextPolicyPanel({ t }: { t: Translate }) {
       {draft === undefined ? error === '' && <p className="vac-hint">{t('loading')}</p> : <>
         <label className="vmm-field">{t('policy.region')}
           <select className="vmm-select" value={draft.region} disabled={busy} onChange={event => {
-            setDraft({ ...draft, region: event.target.value as Policy['region'] })
+            setDraft({ ...draft, region: event.target.value })
             setPreview(undefined)
           }}>
-            {REGIONS.map(region => <option key={region} value={region}>{t(`policy.region.${region}`)}</option>)}
+            {regions.map(region => <option key={region} value={region}>{region}</option>)}
           </select>
         </label>
+        <label className="vmm-field">{t('policy.ruleFile')}
+          <select className="vmm-select" value={file} disabled={busy} onChange={event => {
+            setFile(event.target.value === 'common' ? 'common' : 'region')
+          }}>
+            <option value="region">{draft.region}</option>
+            <option value="common">{t('policy.common')}</option>
+          </select>
+        </label>
+        <RuleEditor key={file === 'common' ? file : draft.region} t={t} route="sqlite/pii-rules"
+          selector={file === 'common' ? file : draft.region} onChanged={() => { setPreview(undefined) }} />
         <label className="vmm-field">{t('policy.sample')}
           <textarea className="vmm-textarea" rows={3} maxLength={4000} value={sample} disabled={busy}
             onChange={event => { setSample(event.target.value); setPreview(undefined) }} />
@@ -63,7 +77,8 @@ export function TextPolicyPanel({ t }: { t: Translate }) {
           }) }}>{t('policy.preview')}</button></div>
         {preview !== undefined && <div className="vac-alert info">
           <p className="vmm-node-body">{preview.text}</p>
-          <p className="vac-hint">{preview.matches.length === 0 ? t('policy.noMatches') : preview.matches.join(' · ')}</p>
+          <p className="vac-hint">{preview.redactions.length === 0 ? t('policy.noMatches')
+            : preview.redactions.map(hit => `${hit.name} ×${hit.count}`).join(' · ')}</p>
           {draft.noise && preview.noise !== null && <p className="vac-hint">{t('policy.noiseMatch')} · {preview.noise}</p>}
         </div>}
       </>}

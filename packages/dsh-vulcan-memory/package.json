@@ -48,6 +48,7 @@
     "@openvulcan/openvulcan-account": "workspace:*",
     "fflate": "^0.8.3",
     "mdast-util-from-markdown": "^2.0.2",
+    "re2js": "2.10.0",
     "zod": "4.4.3"
   },
   "optionalDependencies": {
@@ -72,7 +73,6 @@
     "@deepseek-ai/dsh-workspace": "^0.2.1-rc.2"
   },
   "devDependencies": {
-    "@openvulcan/dsh-vulcan-account": "workspace:*",
     "@deepseek-ai/cordis": "4.1.0",
     "@deepseek-ai/dsh-agent": "0.2.2-rc.1",
     "@deepseek-ai/dsh-client-connection": "0.2.2-rc.1",
@@ -85,6 +85,7 @@
     "@deepseek-ai/dsh-skill": "0.2.2-rc.1",
     "@deepseek-ai/dsh-tools": "0.2.2-rc.1",
     "@deepseek-ai/dsh-workspace": "0.2.2-rc.1",
+    "@openvulcan/dsh-vulcan-account": "workspace:*",
     "@types/node": "^24.0.0",
     "@types/react": "^18.3.31",
     "@types/react-dom": "^18.3.7",
