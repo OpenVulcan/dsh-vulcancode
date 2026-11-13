@@ -38,14 +38,14 @@ import { loadSettings } from './settings.js'
 import { StructuredMemory } from './sqlite/service.js'
 import { consentSchema, mutationSchema } from './sqlite/store.js'
 import { filterSqliteRecallForCompaction, foldSqliteRecall, recallStateSchema, SQLITE_RECALL_PROJECTION, updateSqliteRecall, type RecallState } from './sqlite/recall.js'
-import { watchSqliteTools } from './sqlite/tool-lifecycle.js'
+import { watchMemoryTools } from './tool-lifecycle.js'
 import { dialogueText, TurnDialogue, type CompletedTurn } from './sqlite/workflow.js'
 import { noiseFor, redactText, textPolicySchema } from './sqlite/text-policy.js'
 
-// Define SQLite-specific tool and page request contracts.
-// 定义 SQLite 专用的工具和页面请求协议。
-const SQL_SEARCH = 'sqlite_memory_search'
-const SQL_WRITE = 'sqlite_memory_write'
+// Match the VulcanCode VMM tool names while keeping the existing storage and page contracts.
+// 工具名称与 VulcanCode 的 VMM 对齐，并沿用现有存储和页面协议。
+const VMM_SEARCH = 'vmm_memory_search'
+const VMM_WRITE = 'vmm_memory_write'
 const searchInput = z.strictObject({ query: z.string().trim().min(1).max(4000) })
 const writeInput = z.object({ operation: mutationSchema })
 const projectInput = z.object({ projectId: z.string().optional() })
@@ -102,10 +102,10 @@ export async function apply(ctx: Context): Promise<void> {
     })
   })
 
-  // Registration is tied to the configured mode because dsh 0.2.1 ignores tool activation options.
-  // 注册跟随配置模式，因为 dsh 0.2.1 会忽略工具启用选项。
-  const sqliteTools: ToolDefinition[] = [{
-    name: SQL_SEARCH,
+  // Define the tools that are exposed in vector memory mode.
+  // 定义向量记忆模式对外暴露的工具。
+  const vmmTools: ToolDefinition[] = [{
+    name: VMM_SEARCH,
     description: 'In VMM memory mode, find relevant long-term memories through vector and keyword retrieval.',
     parameters: z.toJSONSchema(searchInput),
     output: OUTPUT,
@@ -114,7 +114,7 @@ export async function apply(ctx: Context): Promise<void> {
       return { content: JSON.stringify(await structured.search(sqlProject(agent), query, true, signal, true)) }
     },
   }, {
-    name: SQL_WRITE,
+    name: VMM_WRITE,
     description: 'In VMM memory mode, add, edit, or remove a durable memory or profile. Edit and remove require the current record id and revision. Store only relevant, non-secret facts.',
     parameters: z.toJSONSchema(writeInput),
     output: OUTPUT,
@@ -126,20 +126,6 @@ export async function apply(ctx: Context): Promise<void> {
       return { content: JSON.stringify(record) }
     },
   }]
-  const sqliteToolLifecycle = watchSqliteTools(memoryDirectory, () => {
-    const disposers: (() => void)[] = []
-    try {
-      for (const definition of sqliteTools) disposers.push(ctx.tools.register(definition, {
-        when: ({ agent }) => !isSubagent(agent.session.header),
-      }))
-      return () => { for (const dispose of disposers) dispose() }
-    } catch (error) {
-      for (const dispose of disposers) dispose()
-      throw error
-    }
-  }, error => ctx.logger.warn(`cannot activate SQLite memory tools: ${error instanceof Error ? error.message : String(error)}`))
-  ctx.effect(() => sqliteToolLifecycle.dispose)
-
   /** Memory of an agent's project, or `undefined` when memory is not active for it. */
   const access = (agent: Agent): markdown.MarkdownMemoryAccess | undefined =>
     markdown.resolveAccess(store, loadSettings(memoryDirectory), projectContext(agent.session.header.cwd))
@@ -157,15 +143,35 @@ export async function apply(ctx: Context): Promise<void> {
     },
   })
 
-  ctx.effect(() => ctx.tools.register(tool(markdown.TOOL_SPECS.outline, (resolved, args) => markdown.outline(resolved, args))))
-  ctx.effect(() => ctx.tools.register(tool(markdown.TOOL_SPECS.search, (resolved, args) => markdown.search(resolved, args))))
-  ctx.effect(() => ctx.tools.register(tool(markdown.TOOL_SPECS.write, (resolved, args, agent) =>
-    markdown.write(resolved, { session: agent.id, source: 'ai' }, args))))
+  // Register one catalog at a time. DSH 0.2.1 only supports register/dispose for global activation.
+  // 每次只注册一套工具。DSH 0.2.1 的全局启停仅支持注册和注销。
+  const markdownTools = [
+    tool(markdown.TOOL_SPECS.outline, (resolved, args) => markdown.outline(resolved, args)),
+    tool(markdown.TOOL_SPECS.search, (resolved, args) => markdown.search(resolved, args)),
+    tool(markdown.TOOL_SPECS.write, (resolved, args, agent) => markdown.write(resolved, { session: agent.id, source: 'ai' }, args)),
+  ]
+  const toolLifecycle = watchMemoryTools(memoryDirectory, mode => {
+    const disposers: (() => void)[] = []
+    try {
+      if (mode === 'markdown') {
+        for (const definition of markdownTools) disposers.push(ctx.tools.register(definition))
+      } else {
+        for (const definition of vmmTools) disposers.push(ctx.tools.register(definition, {
+          when: ({ agent }) => !isSubagent(agent.session.header),
+        }))
+      }
+    } catch (error) {
+      for (const dispose of disposers) dispose()
+      throw error
+    }
+    return () => { for (const dispose of disposers) dispose() }
+  }, error => ctx.logger.warn(`cannot activate memory tools: ${error instanceof Error ? error.message : String(error)}`))
+  ctx.effect(() => toolLifecycle.dispose)
 
   // VulcanCode hides memory_write in Plan mode and forbids it for subagents; dsh keeps the tool
   // catalog stable, so the same rule is a refusal before the call runs.
   ctx.on('tools/pre-execute', async (exec, next): Promise<PreToolDecision> => {
-    if ((exec.name !== markdown.TOOL_SPECS.write.name && exec.name !== SQL_WRITE) || exec.agent === undefined) return next()
+    if ((exec.name !== markdown.TOOL_SPECS.write.name && exec.name !== VMM_WRITE) || exec.agent === undefined) return next()
     if (isSubagent(exec.agent.session.header)) {
       return { kind: 'deny', reason: 'Subagents cannot change long-term memory; report the fact to the parent conversation instead.' }
     }
@@ -204,6 +210,9 @@ export async function apply(ctx: Context): Promise<void> {
   ctx.on('session/event', (session, event) => {
     let tracker = dialogues.get(session)
     if (event.type === 'turn/start') {
+      // DSH assembles the tool catalog before agent/pre-step, so refresh at the committed turn boundary.
+      // DSH 在 agent/pre-step 前组装工具目录，因此在已提交的回合起点刷新。
+      toolLifecycle.refresh()
       admittedTurns.delete(session)
       if (isSubagent(session.header) || loadSettings(memoryDirectory).mode !== 'sqlite') {
         dialogues.delete(session)
@@ -393,7 +402,7 @@ export async function apply(ctx: Context): Promise<void> {
         const previousMode = loadSettings(memoryDirectory).mode
         page.saveSettings(memoryDirectory, settings)
         if (previousMode !== settings.mode) structured.modeChanged()
-        sqliteToolLifecycle.refresh()
+        toolLifecycle.refresh()
         if (previousMode !== settings.mode && settings.mode === 'sqlite') scheduleIndex()
         return page.settingsView(settings)
       }],
