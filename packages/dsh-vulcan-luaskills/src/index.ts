@@ -125,7 +125,7 @@ export function apply(ctx: Context): void {
       if (exec.agent === undefined) throw new Error('this LuaSkills tool needs a session')
       return await ctx.workingDirectory.ensure(exec.agent, exec.signal)
     },
-    call: (canonical: string, args: Record<string, unknown>, context: unknown) => runtime.engine().call(canonical, args, context),
+    call: (canonical: string, args: Record<string, unknown>, context: unknown) => runtime.useEngine(engine => engine.call(canonical, args, context)),
   }
 
   const renderHelp = async (skillId: string, flow: string | undefined): Promise<string> => {
@@ -231,23 +231,23 @@ export function apply(ctx: Context): void {
       const skill = findSkill(url)
       const enabled = url.searchParams.get('enabled')
       if (enabled !== 'true' && enabled !== 'false') throw new RuntimeError('enabled must be true or false', 'invalid_request')
-      return await mutate(() => runtime.engine().setEnabled(skill.skillId, enabled === 'true'))
+      return await mutate(() => runtime.useEngine(engine => engine.setEnabled(skill.skillId, enabled === 'true')))
     }],
     ['POST', 'skills/update', async (_request, url) => {
       const skill = findSkill(url)
       if (skill.source === undefined) throw new RuntimeError(`${skill.skillId} was not installed from a source it can be updated from`, 'invalid_request')
       const source = skill.source
-      return await mutate(() => runtime.engine().update(skill.root, { skill_id: skill.skillId, source: source.locator, source_type: source.type }))
+      return await mutate(() => runtime.useEngine(engine => engine.update(skill.root, { skill_id: skill.skillId, source: source.locator, source_type: source.type })))
     }],
     ['POST', 'skills/uninstall', async (_request, url) => {
       const skill = findSkill(url)
       if (skill.root !== 'USER') throw new RuntimeError(`${skill.skillId} is a default skill; it can be disabled, not removed`, 'invalid_request')
-      return await mutate(() => runtime.engine().uninstall('USER', skill.skillId))
+      return await mutate(() => runtime.useEngine(engine => engine.uninstall('USER', skill.skillId)))
     }],
     ['POST', 'skills/install', async (_request, url) => {
       const id = url.searchParams.get('id') ?? ''
       if (!HUB_ID.test(id)) throw new RuntimeError('id must be a LuaSkills Hub skill id', 'invalid_request')
-      return await mutate(() => runtime.engine().install('USER', { skill_id: null, source: id, source_type: 'official_hub' }))
+      return await mutate(() => runtime.useEngine(engine => engine.install('USER', { skill_id: null, source: id, source_type: 'official_hub' })))
     }],
     ['GET', 'hub/search', async (_request, url) => searchHub(hubBase(), url.searchParams.get('q') ?? '', url.searchParams.get('cursor'), url.searchParams.get('lang'))],
     ['GET', 'hub/skill', async (_request, url) => hubSkill(hubBase(), url.searchParams.get('id') ?? '', url.searchParams.get('lang'))],

@@ -19,7 +19,7 @@ export type RuntimeState =
   | { readonly kind: 'installing'; readonly phase: Phase; readonly received: number; readonly total: number | null }
   | { readonly kind: 'starting' }
   | { readonly kind: 'ready' }
-  | { readonly kind: 'outdated'; readonly installed: Versions }
+  | { readonly kind: 'outdated'; readonly installed: Versions; readonly canUpgrade: boolean; readonly error?: string }
   | { readonly kind: 'failed'; readonly error: string; readonly installed: boolean }
 
 export interface Versions {
@@ -68,6 +68,8 @@ export interface RuntimeView {
   readonly location: string
   readonly sizeMb: number
   readonly versions: Versions
+  readonly installed?: Versions
+  readonly upgradeError?: string
   readonly settings: LuaSkillsSettings
   readonly settingsSource: 'defaults' | 'saved' | 'invalid'
   readonly settingsError?: string

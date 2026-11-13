@@ -34,6 +34,9 @@ export function RuntimeSection({ view, live, t }: { view: HostWatch<RuntimeView 
     if (window.confirm(t('runtime.removeConfirm'))) act(() => callHost('POST', 'remove'))
   }
   const state = live.state
+  // The running version can differ from the available upgrade until migration commits.
+  // 迁移提交前，当前运行版本可能与可升级版本不同。
+  const upgradeAvailable = live.installed !== undefined && versionText(live.installed) !== versionText(live.versions)
   const now = Date.now()
   // When this page first saw the current archive fully downloaded; the SDK then verifies and
   // unpacks it with no progress of its own, so the time since is shown instead.
@@ -94,16 +97,19 @@ export function RuntimeSection({ view, live, t }: { view: HostWatch<RuntimeView 
       break
     }
     case 'starting':
-      body = <div className="vac-inline"><span className="vac-badge info">{t('runtime.starting')}</span><Versions versions={live.versions} t={t} /></div>
+      body = <div className="vac-inline"><span className="vac-badge info">{t('runtime.starting')}</span><Versions versions={live.installed ?? live.versions} t={t} /></div>
       break
     case 'ready':
       body = (
         <div className="vac-between">
           <div className="vac-inline">
             <span className="vac-badge ok">{t('runtime.ready')}</span>
-            <Versions versions={live.versions} t={t} />
+            <Versions versions={live.installed ?? live.versions} t={t} />
           </div>
           <span className="vac-inline">
+            {upgradeAvailable ? <button type="button" className="vac-btn primary" disabled={busy} onClick={install}>
+              {fill(t('runtime.upgrade'), { version: live.versions.luaskills })}
+            </button> : null}
             <button type="button" className="vac-btn sm" disabled={busy} onClick={() => { act(() => callHost('POST', 'restart')) }}>{t('runtime.restart')}</button>
             <button type="button" className="vac-btn sm ghost danger" disabled={busy} onClick={remove}>{t('runtime.remove')}</button>
           </span>
@@ -113,10 +119,13 @@ export function RuntimeSection({ view, live, t }: { view: HostWatch<RuntimeView 
     case 'outdated':
       body = (
         <div className="vls-banner warn">
-          <p className="vac-hint">{fill(t('runtime.outdated'), { installed: versionText(state.installed), wanted: versionText(live.versions) })}</p>
-          <button type="button" className="vac-btn primary" disabled={busy} onClick={() => { act(async () => { await callHost('POST', 'remove'); await callHost('POST', 'install') }) }}>
-            {t('runtime.reinstall')}
-          </button>
+          <div>
+            <p className="vac-hint">{fill(t(state.canUpgrade ? 'runtime.upgradeAvailable' : 'runtime.outdated'), { installed: versionText(state.installed), wanted: versionText(live.versions) })}</p>
+            {state.error === undefined ? null : <p className="vac-error">{fill(t('runtime.engineFailed'), { error: state.error })}</p>}
+          </div>
+          {state.canUpgrade ? <button type="button" className="vac-btn primary" disabled={busy} onClick={install}>
+            {fill(t('runtime.upgrade'), { version: live.versions.luaskills })}
+          </button> : null}
         </div>
       )
       break
@@ -148,6 +157,7 @@ export function RuntimeSection({ view, live, t }: { view: HostWatch<RuntimeView 
       </div>
       <div className="vac-section-body">
         {body}
+        {live.upgradeError === undefined ? null : <p className="vac-error" role="alert">{fill(t('runtime.upgradeFailed'), { error: live.upgradeError })}</p>}
         {error === undefined ? null : <p className="vac-error" role="alert">{error}</p>}
       </div>
     </section>

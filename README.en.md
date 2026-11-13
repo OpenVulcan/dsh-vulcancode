@@ -71,7 +71,7 @@ Renders the model's `ui-*` code fences in chat as comparisons, charts, flowchart
 
 #### `@openvulcan/dsh-vulcan-luaskills`
 
-Install the roughly 190 MB runtime on demand in Settings › LuaSkills. Installation adds CodeKit for code navigation and makes the skill tools available automatically. Settings cover VM pools, the tool cache, managed Python and Node runtimes, and network access. Use the LuaSkills sidebar page to enable, disable, update, or remove skills, or search for and install new ones from the Hub. See [packages/dsh-vulcan-luaskills](packages/dsh-vulcan-luaskills).
+Install the roughly 280 MB LuaSkills 0.9.0 runtime and CodeKit in Settings › LuaSkills. Upgrading from 0.7.2 keeps installed skills, settings, and enabled states. If the upgrade fails or is cancelled, the previous runtime resumes. Settings cover VM pools, the tool cache, managed Python and Node runtimes, and network access. Use the LuaSkills sidebar page to manage installed skills or install new ones from the Hub. See [packages/dsh-vulcan-luaskills](packages/dsh-vulcan-luaskills).
 
 #### `@openvulcan/dsh-vulcan-memory`
 

@@ -16,9 +16,9 @@ export interface PinnedPackage {
 export const SDK_PACKAGES: readonly PinnedPackage[] = [
   {
     name: '@luaskills/sdk',
-    version: '0.6.7',
-    tarball: 'https://registry.npmjs.org/@luaskills/sdk/-/sdk-0.6.7.tgz',
-    integrity: 'sha512-1yEvpMiPiEDDZK3/z1Deq3Hq7fb/SBaznObFjareUyBWoWCurT5jSHpzgex3ioyHnB3i6mXkrfvpukcEoN866Q==',
+    version: '0.9.0',
+    tarball: 'https://registry.npmjs.org/@luaskills/sdk/-/sdk-0.9.0.tgz',
+    integrity: 'sha512-6Wd0MCMVROTmhxEQEFpRxeSzBNZvEsE+6j6DNIEoTnsqkYpmNcvX873f1jsIQIo9bWlgmQQswLOCfnci3yUFEA==',
   },
   {
     name: 'koffi',
@@ -31,8 +31,9 @@ export const SDK_PACKAGES: readonly PinnedPackage[] = [
 /** The SDK package the engine imports. */
 export const SDK_PACKAGE = SDK_PACKAGES[0]!
 
-/** LuaSkills core (JSON FFI) release; also the SDK 0.6.7 default. */
-export const LUASKILLS_VERSION = 'v0.7.2'
+/** Pin the core release to the SDK's verified 0.9 contract.
+ *  将核心版本固定为与 SDK 的 0.9 契约已验证匹配的版本。 */
+export const LUASKILLS_VERSION = 'v0.9.0'
 
 /**
  * Lua runtime packages release. Pinned, because the SDK otherwise asks the GitHub API for the
@@ -41,7 +42,7 @@ export const LUASKILLS_VERSION = 'v0.7.2'
 export const LUA_RUNTIME_VERSION = 'v0.1.8'
 
 /** Roughly what the runtime takes on disk once installed, for the install prompt. */
-export const RUNTIME_SIZE_MB = 190
+export const RUNTIME_SIZE_MB = 280
 
 /** The default skill, installed into the ROOT layer with the runtime; it can be disabled, not removed. */
 export const DEFAULT_SKILL = { skillId: 'vulcan-codekit', source: 'LuaSkills/vulcan-codekit', sourceType: 'github' } as const

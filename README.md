@@ -71,7 +71,7 @@ dsh 通过套件的 `cordis.patch.yml` 装载八个插件。自动审批和语�
 
 #### `@openvulcan/dsh-vulcan-luaskills`
 
-在「设置 › LuaSkills」按需安装约 190 MB 的运行库和默认代码导航技能 CodeKit。安装后引擎和工具自动接入，可以调整 VM 池、缓存、受管 Python / Node 和网络设置。侧栏「LuaSkills」可启用、停用、更新或卸载技能，也可从 LuaSkills Hub 搜索和安装新技能。源码在 [packages/dsh-vulcan-luaskills](packages/dsh-vulcan-luaskills)。
+在「设置 › LuaSkills」按需安装约 280 MB 的 LuaSkills 0.9.0 运行库和默认代码导航技能 CodeKit。已安装 0.7.2 时，可在同一页面升级并保留技能、配置和启停状态。升级失败或取消后会恢复旧版。安装后引擎和工具自动接入，可以调整 VM 池、缓存、受管 Python / Node 和网络设置。侧栏「LuaSkills」可管理已安装技能，也可从 LuaSkills Hub 安装新技能。源码在 [packages/dsh-vulcan-luaskills](packages/dsh-vulcan-luaskills)。
 
 #### `@openvulcan/dsh-vulcan-memory`
 
