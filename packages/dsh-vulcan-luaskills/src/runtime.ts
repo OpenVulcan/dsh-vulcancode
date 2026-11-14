@@ -17,6 +17,7 @@ import { installPackages, packageDir } from './sdk-install.js'
 import {
   engineOptions, loadSettings, parseSettings, saveSettings, type LoadedSettings, type LuaSkillsSettings,
 } from './settings.js'
+import { resolveWorkerExecutable } from './worker-host.js'
 
 export interface Versions {
   readonly sdk: string
@@ -187,7 +188,7 @@ export class LuaSkillsRuntime {
       this.assertActive()
       await this.stopWorker()
       try {
-        for (const directory of [this.versionsDirectory, ...['sdk', 'runtime', 'download'].map(name => path.join(this.home, name))]) {
+        for (const directory of [this.versionsDirectory, ...['sdk', 'runtime', 'download', 'worker-host'].map(name => path.join(this.home, name))]) {
           await rm(directory, { recursive: true, force: true, maxRetries: 3 })
         }
         await rm(this.marker, { force: true })
@@ -339,19 +340,23 @@ export class LuaSkillsRuntime {
 
   /** Create a worker without changing the active installation.
    *  创建进程，保持当前安装指针不变。 */
-  private createWorker(directory: string): LuaSkillsWorker {
+  private async createWorker(directory: string, signal: AbortSignal): Promise<LuaSkillsWorker> {
+    // Provision the host under the same lifecycle lock as the Lua runtime.
+    // 在 Lua 运行库的同一生命周期锁下准备 Worker 宿主。
+    const executable = await resolveWorkerExecutable(path.join(this.home, 'worker-host'), signal)
+    signal.throwIfAborted()
     const worker = new LuaSkillsWorker(this.sdkEntry(directory), (error) => {
       if (this.worker !== worker) return
       this.worker = undefined
       if (this.state.kind === 'ready' || this.state.kind === 'starting') this.set({ kind: 'failed', error: error.message, installed: true })
-    })
+    }, executable)
     return worker
   }
 
   /** Start tracking the worker of the selected installation.
    *  开始跟踪所选安装的进程。 */
-  private spawn(directory: string): LuaSkillsWorker {
-    const worker = this.createWorker(directory)
+  private async spawn(directory: string, signal: AbortSignal): Promise<LuaSkillsWorker> {
+    const worker = await this.createWorker(directory, signal)
     this.worker = worker
     return worker
   }
@@ -370,7 +375,7 @@ export class LuaSkillsRuntime {
       await this.stopWorker()
       signal.throwIfAborted()
       this.assertActive()
-      const worker = this.spawn(this.installationDirectory(this.active))
+      const worker = await this.spawn(this.installationDirectory(this.active), signal)
       await abortable(worker.start({ runtimeRoot: this.runtimeRoot, ...engineOptions(this.loaded.settings) }), signal)
       signal.throwIfAborted()
       this.set({ kind: 'ready' })
@@ -409,7 +414,7 @@ export class LuaSkillsRuntime {
       signal.throwIfAborted()
 
       progress('lua')
-      worker = this.createWorker(directory)
+      worker = await this.createWorker(directory, signal)
       worker.onDownload = (role, received, total) => {
         throttled(() => { progress(role === 'lua_runtime' ? 'lua' : 'core', received, total) }, received === total || received === 0)
       }

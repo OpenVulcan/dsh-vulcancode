@@ -13,6 +13,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import type {
   ApplyResult, EntryDescriptor, HelpDetail, InvocationResult, SkillHelp, WorkerEvent, WorkerReply,
 } from './protocol.js'
+import { workerEnvironment } from './worker-host.js'
 
 export type DownloadListener = (role: string, received: number, total: number | null) => void
 
@@ -32,14 +33,20 @@ export class LuaSkillsWorker {
   /**
    * @param sdkEntry - absolute path of the SDK's entry module.
    * @param onExit - called once if the worker stops without being asked to.
+   * @param executable - absolute path to the process that runs the Worker.
+   * executable 是运行 Worker 的绝对可执行文件路径。
    */
-  constructor(sdkEntry: string, private readonly onExit: (error: Error) => void) {
+  constructor(sdkEntry: string, private readonly onExit: (error: Error) => void, executable = process.execPath) {
     this.worker = fork(fileURLToPath(new URL('./worker.js', import.meta.url)), [pathToFileURL(sdkEntry).href], {
       // Inspector or loader flags of dsh's own process do not apply to the worker; under Electron
       // the executable runs as plain Node.js.
       execArgv: [],
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-      serialization: 'advanced',
+      execPath: executable,
+      env: workerEnvironment(process.env, executable === process.execPath),
+      windowsHide: true,
+      // The standalone Windows host can use a different V8 version. Every RPC payload is JSON.
+      // 独立 Windows 宿主可能使用不同的 V8 版本。所有 RPC 载荷均为 JSON。
+      serialization: 'json',
       stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
     })
     let ready: () => void
