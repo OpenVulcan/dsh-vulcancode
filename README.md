@@ -71,7 +71,7 @@ dsh 通过套件的 `cordis.patch.yml` 装载八个插件。自动审批和语�
 
 #### `@openvulcan/dsh-vulcan-luaskills`
 
-在「设置 › LuaSkills」按需安装约 280 MB 的 LuaSkills 0.9.0 运行库和默认代码导航技能 CodeKit。已安装 0.7.2 时，可在同一页面升级并保留技能、配置和启停状态。升级失败或取消后会恢复旧版。安装后引擎和工具自动接入，可以调整 VM 池、缓存、受管 Python / Node 和网络设置。侧栏「LuaSkills」可管理已安装技能，也可从 LuaSkills Hub 安装新技能。源码在 [packages/dsh-vulcan-luaskills](packages/dsh-vulcan-luaskills)。
+在「设置 › LuaSkills」按需安装 LuaSkills 0.9.0 运行库和默认代码导航技能 CodeKit。已安装 0.7.2 或旧版运行包时，可在同一页面升级并保留技能、配置和启停状态。升级失败或取消后会恢复旧版。Windows 首次启动技能引擎时会下载专用 Node Worker，以支持中文路径。macOS 运行包需要 macOS 15.5 或更新版本。Linux 运行包支持 x64 和 ARM64，需要 glibc 2.35 或更新版本。安装后引擎和工具自动接入，可以调整 VM 池、缓存、受管 Python / Node 和网络设置。侧栏「LuaSkills」可管理已安装技能，也可从 LuaSkills Hub 安装新技能。源码在 [packages/dsh-vulcan-luaskills](packages/dsh-vulcan-luaskills)。
 
 #### `@openvulcan/dsh-vulcan-memory`
 
@@ -144,7 +144,15 @@ dsh plugin --profile web add @openvulcan/dsh-vulcancode
 pnpm install
 pnpm run build
 pnpm run test
-pnpm run pack:dsh   # 生成 dist/openvulcan-dsh-vulcancode-<版本>.tgz
+```
+
+打包前，从 [Lua 运行包 v0.1.9](https://github.com/LuaSkills/luaskills-packages/releases/tag/v0.1.9) 和 [LuaSkills FFI v0.9.0](https://github.com/LuaSkills/luaskills/releases/tag/v0.9.0) 获取四个平台的原始归档。在 Linux 构建环境使用 GNU tar、readelf、Zig 0.16、LLVM 21 与 rcodesign 0.29。将 LLVM 工具置于 PATH，并将 `DSH_MACOS_SDK` 指向 macOS 15.5 SDK。以 Linux ARM64 为例，运行以下命令。其余三个目标使用 `linux-x64`、`macos-arm64` 和 `macos-x64` 替换平台名及对应文件名。
+
+```sh
+node scripts/prepare-luaskills-unix.mjs linux-arm64 \
+  lua-runtime-packages-linux-arm64.tar.gz luaskills-ffi-sdk-linux-arm64.tar.gz \
+  packages/dsh-vulcan-luaskills/assets/native/linux-arm64.tar.gz
+pnpm run pack:dsh
 ```
 
 在网页版配置中安装本地包时，执行 `dsh plugin --profile web add ./dist/openvulcan-dsh-vulcancode-<版本>.tgz`。

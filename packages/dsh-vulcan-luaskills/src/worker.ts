@@ -8,7 +8,10 @@
  * `{ event: 'download', role, received, total }` while runtime archives download.
  */
 
+import { existsSync } from 'node:fs'
+import path from 'node:path'
 import type { WorkerEvent, WorkerReply, WorkerRequest } from './protocol.js'
+import { installPreparedUnixRuntime, openUnixLuaSymbols, preparedUnixTarget, UNIX_NATIVE_SMOKE } from './unix-runtime.js'
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- the SDK is loaded at run time and has no types here. */
 type Sdk = any
@@ -17,9 +20,15 @@ type Client = any
 if (process.send === undefined) throw new Error('the LuaSkills worker must be started by the plugin')
 // Without dsh there is nobody to answer; never linger as an orphan.
 process.on('disconnect', () => { process.exit(0) })
-const sdk: Sdk = await import(process.argv[2]!)
+// Keep the SDK URL for resolving its private Koffi installation.
+// 保留 SDK 地址以解析其独立安装的 Koffi。
+const sdkUrl = process.argv[2]!
+const sdk: Sdk = await import(sdkUrl)
 
 let client: Client | undefined
+// Hold the global handle until the Worker exits, including when the SDK uses its own local handle.
+// 在 Worker 退出前持有全局句柄，即使 SDK 另有局部句柄。
+let unixSymbols: ReturnType<typeof openUnixLuaSymbols> | undefined
 let roots: { name: string; skills_dir: string }[] = []
 
 const post = (message: WorkerReply | WorkerEvent): void => { process.send!(message) }
@@ -71,6 +80,13 @@ const SYSTEM = 'system'
 
 const handlers: Record<string, (params: any) => unknown> = {
   async installRuntime(params: { runtimeRoot: string; luaskillsVersion: string; luaRuntimeVersion: string }) {
+    // Unix archives are linked and signed when packing the plugin. No build tools run on the user's machine.
+    // Unix 归档在打包插件时完成重链接和签名，用户设备无需运行构建工具。
+    const target = preparedUnixTarget()
+    if (target !== undefined) {
+      await installPreparedUnixRuntime(target, params.runtimeRoot, sdk.embeddedContract.EMBEDDED_CONTRACT_SHA256)
+      return null
+    }
     const options = {
       runtimeRoot: params.runtimeRoot,
       database: 'none',
@@ -90,10 +106,25 @@ const handlers: Record<string, (params: any) => unknown> = {
   start(params: { runtimeRoot: string; poolConfig: object; hostOptions: object }) {
     client?.close()
     client = undefined
+    unixSymbols?.unload()
+    unixSymbols = undefined
     roots = sdk.RuntimeRoots.standard(params.runtimeRoot)
-    const created = sdk.LuaSkillsClient.create({ runtimeRoot: params.runtimeRoot, poolConfig: params.poolConfig, hostOptions: params.hostOptions })
+    // Only prepared Unix slots expose Lua symbols. Old installations can still serve as rollback targets.
+    // 仅预处理后的 Unix 版本目录导出 Lua 符号，旧安装仍可用于回退。
+    const prepared = preparedUnixTarget() !== undefined &&
+      existsSync(path.join(params.runtimeRoot, 'resources', 'dsh-ffi-contract.sha256'))
+    // Resolve only within this slot so LUASKILLS_LIB cannot swap out the verified core.
+    // 只在当前版本目录解析核心库，避免 LUASKILLS_LIB 替换经过校验的核心。
+    const libraryPath: string | null = prepared ? sdk.resolveLuaSkillsLibraryPathFromRuntime(params.runtimeRoot) : null
+    if (prepared && libraryPath === null) throw new Error('The prepared LuaSkills core is missing.')
+    if (libraryPath !== null) unixSymbols = openUnixLuaSymbols(libraryPath, sdkUrl)
+    const created = sdk.LuaSkillsClient.create({
+      runtimeRoot: params.runtimeRoot, poolConfig: params.poolConfig, hostOptions: params.hostOptions,
+      ...(libraryPath === null ? {} : { libraryPath }),
+    })
     try {
       created.loadFromRoots(roots)
+      if (prepared && created.runLua(UNIX_NATIVE_SMOKE) !== true) throw new Error('LuaSkills native module verification failed.')
     } catch (error) {
       created.close()
       throw error
@@ -127,6 +158,8 @@ const handlers: Record<string, (params: any) => unknown> = {
   stop() {
     client?.close()
     client = undefined
+    unixSymbols?.unload()
+    unixSymbols = undefined
     return null
   },
 }

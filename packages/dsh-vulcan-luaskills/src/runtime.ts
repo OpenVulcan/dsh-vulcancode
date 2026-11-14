@@ -31,6 +31,9 @@ export const PINNED: Versions = { sdk: SDK_PACKAGE.version, luaskills: LUASKILLS
 // The installed tuple supported as the source and rollback target of this upgrade.
 // 此次升级支持的来源及回退目标版本组合。
 const PREVIOUS: Versions = { sdk: '0.6.7', luaskills: 'v0.7.2', luaRuntime: 'v0.1.8' }
+// Installations from the previous 0.9.0 runtime can still be upgraded and rolled back.
+// 旧运行包上的 0.9.0 仍可升级及回退。
+const PREVIOUS_090: Versions = { sdk: '0.9.0', luaskills: 'v0.9.0', luaRuntime: 'v0.1.8' }
 
 /** Install steps, in the order the SDK fetches the runtime archives. */
 export const PHASES = ['sdk', 'lua', 'core', 'engine', 'skill'] as const
@@ -320,7 +323,7 @@ export class LuaSkillsRuntime {
    *  同时校验原生平台和受支持的 SDK 与核心版本组合。 */
   private canRun(marker: Marker): boolean {
     return marker.platform === `${process.platform}-${process.arch}`
-      && (matchesVersions(marker, PINNED) || matchesVersions(marker, PREVIOUS))
+      && [PINNED, PREVIOUS, PREVIOUS_090].some(versions => matchesVersions(marker, versions))
   }
 
   private readMarker(): Marker | undefined {
@@ -382,7 +385,7 @@ export class LuaSkillsRuntime {
     } catch (error) {
       await this.stopWorker()
       if (!this.closed) {
-        if (this.active !== undefined && matchesVersions(this.active, PREVIOUS)) {
+        if (this.active !== undefined && !matchesVersions(this.active, PINNED)) {
           this.set({ kind: 'outdated', installed: this.active, canUpgrade: true, error: messageOf(error) })
         } else {
           this.set({ kind: 'failed', error: messageOf(error), installed: true })

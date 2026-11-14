@@ -37,9 +37,10 @@ export const LUASKILLS_VERSION = 'v0.9.0'
 
 /**
  * Lua runtime packages release. Pinned, because the SDK otherwise asks the GitHub API for the
- * newest release of the series on every install.
+ * newest release of the series on every install. Windows continues to use the original runtime.
+ * 固定运行包版本，避免安装时查询系列最新发行版。Windows 继续使用原来的运行包。
  */
-export const LUA_RUNTIME_VERSION = 'v0.1.8'
+export const LUA_RUNTIME_VERSION = process.platform === 'linux' || process.platform === 'darwin' ? 'v0.1.9' : 'v0.1.8'
 
 /** Roughly what the runtime takes on disk once installed, for the install prompt. */
 export const RUNTIME_SIZE_MB = 280

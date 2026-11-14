@@ -9,6 +9,7 @@ npm-debug.log*
 /dist/
 /packages/*/lib/
 /packages/*/build/
+/packages/dsh-vulcan-luaskills/assets/native/
 
 # Model packages are installed separately, never committed
 *.onnx

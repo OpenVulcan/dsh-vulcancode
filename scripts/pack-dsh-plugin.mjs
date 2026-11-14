@@ -78,6 +78,15 @@ function reach(name, found = new Set()) {
 const suiteName = `@openvulcan/${SUITE}`
 const suite = workspace.get(suiteName)
 if (suite === undefined) throw new Error(`no ${suiteName} in packages/`)
+// Fail at packaging time if the Unix runtime payloads were not prepared.
+// 若缺少已预处理的 Unix 运行包，在打包阶段直接报错。
+const luaSkillsAssets = path.join(PACKAGES, 'dsh-vulcan-luaskills', 'assets', 'native')
+for (const target of ['linux-arm64', 'linux-x64', 'macos-arm64', 'macos-x64']) {
+  for (const suffix of ['.tar.gz', '.tar.gz.sha256']) {
+    const asset = path.join(luaSkillsAssets, target + suffix)
+    if (!fs.existsSync(asset)) throw new Error(`Missing ${asset}. Run scripts/prepare-luaskills-unix.mjs before packing.`)
+  }
+}
 // The catalog reads the repository manifest, while npm installs the suite manifest.
 // 收录站读取仓库根清单，npm 安装时读取套件清单。
 const repositoryManifest = readJson(path.join(ROOT, 'package.json'))
