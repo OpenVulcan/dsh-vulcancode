@@ -181,6 +181,9 @@ export function engineOptions(settings: LuaSkillsSettings): { poolConfig: Record
   return {
     poolConfig: pool(settings.vmPool),
     hostOptions: {
+      // DSH runs on Windows without an interactive Lua console. Desktop mode also hides native child consoles.
+      // DSH 在 Windows 不使用交互式 Lua 控制台。桌面模式还会隐藏原生子进程控制台。
+      ...(process.platform === 'win32' ? { host_mode: 'desktop' } : {}),
       runlua_pool_config: pool(settings.runLuaPool),
       cache_config: {
         max_entries: settings.toolCache.maxEntries,

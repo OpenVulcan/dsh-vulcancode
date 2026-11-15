@@ -61,6 +61,7 @@ test('saved settings read back whole', () => {
 
 test('engine options use the SDK wire names and leave an automatic encoding out', () => {
   const { poolConfig, hostOptions } = engineOptions(DEFAULT_SETTINGS)
+  assert.equal(hostOptions['host_mode'], process.platform === 'win32' ? 'desktop' : undefined)
   assert.deepEqual(Object.keys(poolConfig).sort(), ['idle_ttl_secs', 'max_size', 'min_size'])
   for (const key of ['runlua_pool_config', 'cache_config', 'managed_runtime_config', 'capabilities', 'official_skill_hub_base_url', 'allow_network_download']) {
     assert.ok(key in hostOptions, key)
