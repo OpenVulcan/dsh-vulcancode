@@ -11,7 +11,7 @@ import { fork, type ChildProcess } from 'node:child_process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import type {
-  ApplyResult, EntryDescriptor, HelpDetail, InvocationResult, SkillHelp, WorkerEvent, WorkerReply,
+  ApplyResult, EntryDescriptor, HelpDetail, InvocationResult, ManagedKind, ManagedView, SkillHelp, WorkerEvent, WorkerReply,
 } from './protocol.js'
 import { workerEnvironment } from './worker-host.js'
 
@@ -103,6 +103,18 @@ export class LuaSkillsWorker {
 
   installRuntime(params: { runtimeRoot: string; luaskillsVersion: string; luaRuntimeVersion: string }): Promise<void> {
     return this.request('installRuntime', params)
+  }
+
+  /** Inspect the SDK-pinned interpreters under runtimeRoot using the slot's Lua archive version.
+   * 使用当前版本的 Lua 运行包版本号，检查 runtimeRoot 下 SDK 固定版本的解释器。 */
+  inspectManaged(runtimeRoot: string, luaRuntimeVersion: string): Promise<ManagedView> {
+    return this.request('inspectManaged', { runtimeRoot, luaRuntimeVersion })
+  }
+
+  /** Ask the worker to provision only the requested missing interpreter.
+   * 请求 Worker 仅补装指定且缺失的解释器。 */
+  installManaged(runtimeRoot: string, luaRuntimeVersion: string, kind: ManagedKind): Promise<void> {
+    return this.request('installManaged', { runtimeRoot, luaRuntimeVersion, kind })
   }
 
   start(params: { runtimeRoot: string; poolConfig: object; hostOptions: object }): Promise<void> {

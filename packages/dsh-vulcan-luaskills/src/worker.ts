@@ -10,7 +10,8 @@
 
 import { existsSync } from 'node:fs'
 import path from 'node:path'
-import type { WorkerEvent, WorkerReply, WorkerRequest } from './protocol.js'
+import type { ManagedKind, WorkerEvent, WorkerReply, WorkerRequest } from './protocol.js'
+import { inspectManaged, installManaged } from './managed-runtime.js'
 import { installPreparedUnixRuntime, openUnixLuaSymbols, preparedUnixTarget, UNIX_NATIVE_SMOKE } from './unix-runtime.js'
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- the SDK is loaded at run time and has no types here. */
@@ -79,6 +80,12 @@ function root(name: string) {
 const SYSTEM = 'system'
 
 const handlers: Record<string, (params: any) => unknown> = {
+  // Resolve or install a single interpreter under the selected LuaSkills slot.
+  // 在选定的 LuaSkills 版本目录中检查或安装一个解释器。
+  inspectManaged: (params: { runtimeRoot: string; luaRuntimeVersion: string }) =>
+    inspectManaged(sdk, params.runtimeRoot, params.luaRuntimeVersion),
+  installManaged: (params: { runtimeRoot: string; luaRuntimeVersion: string; kind: ManagedKind }) =>
+    installManaged(sdk, params.runtimeRoot, params.luaRuntimeVersion, params.kind),
   async installRuntime(params: { runtimeRoot: string; luaskillsVersion: string; luaRuntimeVersion: string }) {
     // Unix archives are linked and signed when packing the plugin. No build tools run on the user's machine.
     // Unix 归档在打包插件时完成重链接和签名，用户设备无需运行构建工具。

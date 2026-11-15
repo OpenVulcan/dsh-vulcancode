@@ -225,6 +225,13 @@ export function apply(ctx: Context): void {
     ['POST', 'install/cancel', async () => { runtime.cancel() }],
     ['POST', 'remove', () => runtime.remove()],
     ['POST', 'restart', () => runtime.restart()],
+    ['POST', 'managed/install', async (_request, url) => {
+      // Only the two managed interpreter families are accepted by this route.
+      // 此路由仅接受两种受管解释器类型。
+      const kind = url.searchParams.get('kind')
+      if (kind !== 'node' && kind !== 'python') throw new RuntimeError('kind must be node or python', 'invalid_request')
+      await runtime.installManaged(kind)
+    }],
     ['POST', 'settings', async request => runtime.saveSettings(await readJson(request))],
     ['GET', 'skills', () => skillRows()],
     ['POST', 'skills/enabled', async (_request, url) => {

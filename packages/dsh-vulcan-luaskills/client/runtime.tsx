@@ -18,6 +18,81 @@ export function useRuntime(view: HostWatch<RuntimeView | null>): RuntimeView | n
   return live
 }
 
+/** Show the live interpreter environment and let the user install either missing family.
+ * 显示当前解释器环境，并允许用户分别补装缺失项。 */
+export function ManagedRuntimeSection({ view, live, t }: { view: HostWatch<RuntimeView | null>; live: RuntimeView; t: Translate }) {
+  // An action started here remains pending until the host reports the actual result.
+  // 此处发起的操作保持等待，直到宿主返回实际结果。
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState<string | undefined>(undefined)
+  const managed = live.managed
+
+  /** Install only the selected interpreter and refresh displayed statuses.
+   * 仅安装所选解释器并刷新显示状态。 */
+  const install = (kind: 'node' | 'python') => {
+    setPending(true)
+    setError(undefined)
+    void callHost('POST', `managed/install?kind=${kind}`).catch((failure: unknown) => {
+      setError(messageOf(failure))
+    }).finally(() => {
+      view.refresh()
+      setPending(false)
+    })
+  }
+
+  return (
+    <section className="vac-section">
+      <div className="vac-section-head">
+        <div>
+          <h3 className="vac-section-title">{t('managed.title')}</h3>
+          {managed === undefined ? null : <p className="vac-section-lead vac-mono vls-env-path">{managed.root}</p>}
+        </div>
+      </div>
+      <div className="vac-section-body">
+        {managed === undefined && live.managedError === undefined ? (
+          <p className="vac-hint">{t(live.state.kind === 'starting' || live.state.kind === 'installing' ? 'loading' : 'managed.needEngine')}</p>
+        ) : null}
+        {!live.settings.network.allowDownloads ? <p className="vac-hint">{t('managed.downloadsDisabled')}</p> : null}
+        {live.managedError === undefined ? null : <p className="vac-error" role="alert">{live.managedError}</p>}
+        {error === undefined ? null : <p className="vac-error" role="alert">{error}</p>}
+        {managed === undefined ? null : (
+          <ul className="vls-list">
+            {(['node', 'python'] as const).map(kind => {
+              // Distinguish a live install from the settled state of each interpreter.
+              // 将正在安装与各解释器已确定的状态分开显示。
+              const runtime = managed[kind]
+              const installing = live.managedInstalling === kind
+              const ready = runtime.executable !== null
+              return (
+                <li key={kind} className="vls-row">
+                  <div className="vls-row-main">
+                    <div className="vac-inline">
+                      <strong>{t(`managed.name.${kind}`)}</strong>
+                      <span className="vac-hint vac-mono">{runtime.version} · {kind === 'node' ? 'pnpm' : 'uv'} {runtime.packageManagerVersion}</span>
+                      <span className={`vac-badge ${installing ? 'info' : ready ? 'ok' : runtime.error === undefined ? 'outline' : 'bad'}`}>
+                        {t(installing ? 'managed.installing' : ready ? 'managed.ready' : runtime.error === undefined ? 'managed.missing' : 'managed.failed')}
+                      </span>
+                    </div>
+                    {runtime.executable === null ? null : <p className="vac-hint vac-mono">{runtime.executable}</p>}
+                    {runtime.error === undefined || installing ? null : <p className="vac-error vls-env-path" role="alert">{runtime.error}</p>}
+                  </div>
+                  {ready ? null : (
+                    <button type="button" className="vac-btn sm"
+                      disabled={pending || live.state.kind !== 'ready' || live.managedInstalling !== undefined || !live.settings.network.allowDownloads}
+                      onClick={() => { install(kind) }}>
+                      {t(`managed.install.${kind}`)}
+                    </button>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </div>
+    </section>
+  )
+}
+
 export function RuntimeSection({ view, live, t }: { view: HostWatch<RuntimeView | null>; live: RuntimeView; t: Translate }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | undefined>(undefined)

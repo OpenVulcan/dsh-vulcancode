@@ -6,13 +6,15 @@
 import { useEffect, useState, type FormEvent } from 'react'
 
 import { fill, type Key, type Translate } from './i18n'
-import { useRuntime } from './runtime'
+import { ManagedRuntimeSection, useRuntime } from './runtime'
 import {
   callHost, isInstalled, messageOf, type ApplyResult, type HostWatch, type HubDetail, type HubPage, type HubSkill,
   type RuntimeView, type SkillRow,
 } from './shared'
 
-type Tab = 'installed' | 'hub'
+// Skills, catalog and interpreter status share a single LuaSkills page.
+// 本地技能、目录和解释器状态共用同一 LuaSkills 页面。
+type Tab = 'installed' | 'hub' | 'environment'
 
 /** Render the skills page with a shared runtime view, translations and a Settings shortcut.
  * 使用共享运行状态、翻译函数和设置入口渲染技能页面。 */
@@ -60,7 +62,7 @@ export function LuaSkillsPage({ view, t, openSettings }: { view: HostWatch<Runti
           </div>
         ) : null}
         <div className="vls-tabs" role="tablist">
-          {(['installed', 'hub'] as const).map(name => (
+          {(['installed', 'hub', 'environment'] as const).map(name => (
             <button key={name} type="button" role="tab" aria-selected={tab === name} className={tab === name ? 'vls-tab on' : 'vls-tab'} onClick={() => {
               if (name === 'hub') setHubVisited(true)
               setTab(name)
@@ -78,6 +80,7 @@ export function LuaSkillsPage({ view, t, openSettings }: { view: HostWatch<Runti
               live={live} ready={ready} installed={skills ?? []} reload={reload} view={view} t={t} />
           ) : null}
         </div>
+        {tab !== 'environment' || live == null ? null : <ManagedRuntimeSection view={view} live={live} t={t} />}
       </div>
     </div>
   )

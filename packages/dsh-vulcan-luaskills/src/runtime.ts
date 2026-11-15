@@ -13,6 +13,7 @@ import {
   DEFAULT_SKILL, HUB_SITES, LUA_RUNTIME_VERSION, LUASKILLS_VERSION, RUNTIME_SIZE_MB, SDK_PACKAGE, SDK_PACKAGES,
 } from './constants.js'
 import { LuaSkillsWorker } from './engine.js'
+import type { ManagedKind, ManagedView } from './protocol.js'
 import { installPackages, packageDir } from './sdk-install.js'
 import {
   engineOptions, loadSettings, parseSettings, saveSettings, type LoadedSettings, type LuaSkillsSettings,
@@ -61,6 +62,11 @@ export interface RuntimeView {
   readonly settingsSource: 'defaults' | 'saved' | 'invalid'
   readonly settingsError?: string
   readonly hubSites: typeof HUB_SITES
+  /** Managed runtime checks, the ongoing install and any catalog-level failure.
+   * 受管运行时检查结果、当前安装任务和环境检查错误。 */
+  readonly managed?: ManagedView
+  readonly managedInstalling?: ManagedKind
+  readonly managedError?: string
 }
 
 export class RuntimeError extends Error {
@@ -91,6 +97,11 @@ export class LuaSkillsRuntime {
   private readonly versionsDirectory: string
   private active: Marker | undefined
   private upgradeError: string | undefined
+  // Keep interpreter status separate from engine readiness so a missing download does not disable Lua skills.
+  // 解释器状态独立于引擎就绪状态，下载失败时仍可使用 Lua 技能。
+  private managed: ManagedView | undefined
+  private managedInstalling: ManagedKind | undefined
+  private managedError: string | undefined
   private state: RuntimeState = { kind: 'absent' }
   private worker: LuaSkillsWorker | undefined
   private loaded: LoadedSettings
@@ -132,6 +143,9 @@ export class LuaSkillsRuntime {
       settingsSource: this.loaded.kind,
       ...this.loaded.kind === 'invalid' ? { settingsError: this.loaded.error } : {},
       hubSites: HUB_SITES,
+      ...this.managed === undefined ? {} : { managed: this.managed },
+      ...this.managedInstalling === undefined ? {} : { managedInstalling: this.managedInstalling },
+      ...this.managedError === undefined ? {} : { managedError: this.managedError },
     }
   }
 
@@ -156,7 +170,7 @@ export class LuaSkillsRuntime {
           this.set({ kind: 'outdated', installed, canUpgrade: false })
           return
         }
-        await this.start(signal)
+        await this.start(signal, 'all')
       })
     } catch (error) {
       if (!this.closed) this.set({ kind: 'failed', error: messageOf(error), installed: this.active !== undefined })
@@ -197,6 +211,8 @@ export class LuaSkillsRuntime {
         await rm(this.marker, { force: true })
         this.active = undefined
         this.upgradeError = undefined
+        this.managed = undefined
+        this.managedError = undefined
         this.set({ kind: 'absent' })
       } catch (error) {
         this.set({ kind: 'failed', error: messageOf(error), installed: this.active !== undefined })
@@ -212,6 +228,22 @@ export class LuaSkillsRuntime {
       this.assertActive()
       if (!this.canRun(this.active)) throw new RuntimeError('This LuaSkills version cannot be started by this plugin.')
       await this.start(signal)
+    })
+  }
+
+  /** Provision a selected interpreter and restart the engine so it sees the distribution.
+   * 补装指定解释器，并重启引擎以识别该发行目录。 */
+  async installManaged(kind: ManagedKind): Promise<void> {
+    await this.runExclusive('change', async signal => {
+      this.assertActive()
+      if (this.active?.sdk !== SDK_PACKAGE.version || this.state.kind !== 'ready') {
+        throw new RuntimeError('Start the current LuaSkills engine before installing a managed runtime.')
+      }
+      if (!this.loaded.settings.network.allowDownloads) {
+        throw new RuntimeError('Enable LuaSkills network downloads before installing a managed runtime.', 'invalid_request')
+      }
+      if (this.managed?.[kind].executable != null) return
+      await this.start(signal, kind)
     })
   }
 
@@ -372,13 +404,19 @@ export class LuaSkillsRuntime {
 
   /** Start the selected version and report its availability after the worker responds.
    *  启动所选版本，在进程响应后发布可用状态。 */
-  private async start(signal: AbortSignal): Promise<void> {
+  private async start(signal: AbortSignal, provision?: ManagedKind | 'all'): Promise<void> {
     this.set({ kind: 'starting' })
     try {
       await this.stopWorker()
       signal.throwIfAborted()
       this.assertActive()
       const worker = await this.spawn(this.installationDirectory(this.active), signal)
+      if (this.active?.sdk === SDK_PACKAGE.version) {
+        await this.syncManaged(worker, this.runtimeRoot, this.active.luaRuntime, signal, provision)
+      } else {
+        this.managed = undefined
+        this.managedError = undefined
+      }
       await abortable(worker.start({ runtimeRoot: this.runtimeRoot, ...engineOptions(this.loaded.settings) }), signal)
       signal.throwIfAborted()
       this.set({ kind: 'ready' })
@@ -391,6 +429,51 @@ export class LuaSkillsRuntime {
           this.set({ kind: 'failed', error: messageOf(error), installed: true })
         }
       }
+    }
+  }
+
+  /** Refresh runtime status and install only missing interpreters selected by this lifecycle operation.
+   * 刷新运行状态，仅安装本次生命周期操作选择且仍缺失的解释器。 */
+  private async syncManaged(
+    worker: LuaSkillsWorker,
+    runtimeRoot: string,
+    luaRuntimeVersion: string,
+    signal: AbortSignal,
+    provision: ManagedKind | 'all' | undefined,
+  ): Promise<void> {
+    this.managedError = undefined
+    try {
+      this.managed = await abortable(worker.inspectManaged(runtimeRoot, luaRuntimeVersion), signal)
+      if (provision === undefined || !this.loaded.settings.network.allowDownloads) return
+      const kinds = provision === 'all' ? ['node', 'python'] as const : [provision]
+      // Preserve a failed sibling's diagnostic when the other interpreter installs successfully.
+      // 另一个解释器安装成功后，仍保留此前失败项的诊断。
+      const errors: Partial<Record<ManagedKind, string>> = {}
+      for (const kind of kinds) {
+        if (this.managed[kind].executable !== null) continue
+        this.managedInstalling = kind
+        this.changed()
+        try {
+          await abortable(worker.installManaged(runtimeRoot, luaRuntimeVersion, kind), signal)
+        } catch (error) {
+          signal.throwIfAborted()
+          errors[kind] = messageOf(error)
+        }
+        this.managed = await abortable(worker.inspectManaged(runtimeRoot, luaRuntimeVersion), signal)
+        for (const failedKind of kinds) {
+          const error = errors[failedKind]
+          if (error !== undefined) {
+            this.managed = { ...this.managed, [failedKind]: { ...this.managed[failedKind], error } }
+          }
+        }
+      }
+    } catch (error) {
+      signal.throwIfAborted()
+      this.managed = undefined
+      this.managedError = messageOf(error)
+    } finally {
+      this.managedInstalling = undefined
+      if (!this.closed) this.changed()
     }
   }
 
@@ -432,6 +515,7 @@ export class LuaSkillsRuntime {
         await copyRuntimeData(previousRoot, runtimeRoot, signal)
       }
       signal.throwIfAborted()
+      await this.syncManaged(worker, runtimeRoot, LUA_RUNTIME_VERSION, signal, 'all')
       await abortable(worker.start({ runtimeRoot, ...engineOptions(this.loaded.settings) }), signal)
 
       progress('skill')
@@ -470,6 +554,8 @@ export class LuaSkillsRuntime {
       if (!signal.aborted) this.upgradeError = messageOf(error)
       if (previous === undefined) {
         this.upgradeError = undefined
+        this.managed = undefined
+        this.managedError = undefined
         this.set(signal.aborted ? { kind: 'absent' } : { kind: 'failed', error: messageOf(error), installed: false })
       } else if (this.worker !== undefined) {
         this.set({ kind: 'ready' })
@@ -530,6 +616,7 @@ async function copyRuntimeData(source: string, destination: string, signal: Abor
         // 安装暂存和虚拟环境会重新生成，其中的路径可能指向旧运行目录。
         const relative = path.relative(source, file)
         return relative !== path.join('state', 'install_tmp') && relative !== path.join('dependencies', 'envs')
+          && !relative.startsWith(path.join('dependencies', '.managed-'))
       },
     })
   }

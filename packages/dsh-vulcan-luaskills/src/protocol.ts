@@ -15,6 +15,33 @@ export type WorkerEvent =
   /** Bytes of one runtime archive so far; `total` is null when the server sent no length. */
   | { readonly event: 'download'; readonly role: string; readonly received: number; readonly total: number | null }
 
+/** Interpreter families supported by the SDK's managed installer.
+ * SDK 受管安装器支持的解释器类型。 */
+export type ManagedKind = 'node' | 'python'
+
+/** Report a managed interpreter and package manager in the current runtime slot.
+ * 报告当前运行库版本中的受管解释器及包管理器。 */
+export interface ManagedStatus {
+  /** Interpreter or package manager build selected by the SDK.
+   * SDK 选定的解释器和包管理器版本。 */
+  readonly version: string
+  readonly packageManagerVersion: string
+  /** Absolute executable path when both the interpreter and package manager are present.
+   * 解释器和包管理器均已安装时的绝对可执行文件路径。 */
+  readonly executable: string | null
+  /** Installation or validation error when the runtime could not be used.
+   * 运行时不可用时的安装或校验错误。 */
+  readonly error?: string
+}
+
+/** Display the SDK distribution root and the two runtime states.
+ * 显示 SDK 发行目录及两个运行时的状态。 */
+export interface ManagedView {
+  readonly root: string
+  readonly node: ManagedStatus
+  readonly python: ManagedStatus
+}
+
 /** One skill entry as the SDK lists it; only the fields read here. */
 export interface EntryDescriptor {
   readonly canonical_name: string

@@ -71,7 +71,9 @@ dsh 通过套件的 `cordis.patch.yml` 装载八个插件。自动审批和语�
 
 #### `@openvulcan/dsh-vulcan-luaskills`
 
-在「设置 › LuaSkills」按需安装 LuaSkills 0.9.0 运行库和默认代码导航技能 CodeKit。已安装 0.7.2 或旧版运行包时，可在同一页面升级并保留技能、配置和启停状态。升级失败或取消后会恢复旧版。Windows 首次启动技能引擎时会下载专用 Node Worker，以支持中文路径。macOS 运行包需要 macOS 15.5 或更新版本。Linux 运行包支持 x64 和 ARM64，需要 glibc 2.35 或更新版本。安装后引擎和工具自动接入，可以调整 VM 池、缓存、受管 Python / Node 和网络设置。侧栏「LuaSkills」可管理已安装技能，也可从 LuaSkills Hub 安装新技能。源码在 [packages/dsh-vulcan-luaskills](packages/dsh-vulcan-luaskills)。
+在「设置 › LuaSkills」按需安装 LuaSkills 0.9.0 运行库和默认代码导航技能 CodeKit。已安装 0.7.2 或旧版运行包时，可在同一页面升级并保留技能、配置和启停状态。升级失败或取消后会恢复旧版。Windows 首次启动技能引擎时会下载专用 Node Worker，以支持中文路径。macOS 运行包需要 macOS 15.5 或更新版本。Linux 运行包支持 x64 和 ARM64，需要 glibc 2.35 或更新版本。
+
+侧栏「LuaSkills」可以管理本地技能、浏览 Hub，并在「环境」中查看受管 Node.js、Python 和配套包管理器的版本、可执行文件路径及安装状态。启用网络下载时，安装 LuaSkills 或加载已有运行库会补装缺失项，已就绪的解释器会直接复用。也可从「环境」或「设置 › LuaSkills」分别补装。源码在 [packages/dsh-vulcan-luaskills](packages/dsh-vulcan-luaskills)。
 
 #### `@openvulcan/dsh-vulcan-memory`
 

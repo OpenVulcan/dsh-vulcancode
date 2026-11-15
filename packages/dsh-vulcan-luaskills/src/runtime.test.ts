@@ -6,6 +6,17 @@ import { test, type TestContext } from 'node:test'
 
 import { LuaSkillsRuntime, PINNED } from './runtime.js'
 import { DEFAULT_SETTINGS } from './settings.js'
+import type { ManagedKind, ManagedView } from './protocol.js'
+
+/** Return a managed environment with explicitly selected missing interpreters.
+ * 返回指定缺失项的受管环境数据。 */
+function managedFixture(runtimeRoot: string, missing: readonly ManagedKind[] = []): ManagedView {
+  return {
+    root: path.join(runtimeRoot, 'dependencies', 'runtimes'),
+    node: { version: '24.18.0', packageManagerVersion: '11.11.0', executable: missing.includes('node') ? null : path.join(runtimeRoot, 'node') },
+    python: { version: '3.14.6', packageManagerVersion: '0.11.28', executable: missing.includes('python') ? null : path.join(runtimeRoot, 'python') },
+  }
+}
 
 /** The worker operations the lifecycle tests control without starting a native process.
  *  生命周期测试控制的 worker 操作，无须启动原生进程。 */
@@ -144,6 +155,12 @@ function upgradeFixture(context: TestContext) {
       writeFileSync(path.join(runtimeRoot, 'libs', 'new-core'), 'new native library')
     },
     async start() {},
+    // Supply an already installed environment to lifecycle tests that only exercise migration.
+    // 仅测试迁移的生命周期测试使用已安装的解释器环境。
+    async inspectManaged(runtimeRoot: string) { return managedFixture(runtimeRoot) },
+    async installManaged(_root: string, _version: string, _kind: ManagedKind) {
+      throw new Error('a ready runtime must not be reinstalled')
+    },
     async help() { return [skill] },
     async install() { throw new Error('the preserved default skill must not be reinstalled') },
     async stop() {},
@@ -163,6 +180,25 @@ function upgradeFixture(context: TestContext) {
   controlled.createWorker = directory => directory === home ? legacy : candidate
   return { home, oldRoot, markerFile, originalMarker, settings, legacyFiles, runtime, controlled, candidate, legacy }
 }
+
+test('upgrade only provisions the missing managed runtime and keeps Lua usable if it fails', async context => {
+  const { runtime, candidate, controlled } = upgradeFixture(context)
+  // Only Python is missing. Node must never be handed to the installer.
+  // 只有 Python 缺失，安装器不应收到 Node 安装请求。
+  const calls: ManagedKind[] = []
+  candidate.inspectManaged = async root => managedFixture(root, ['python'])
+  candidate.installManaged = async (_root, _version, kind) => {
+    calls.push(kind)
+    throw new Error('test Python download failed')
+  }
+  await runtime.boot()
+  runtime.install()
+  await controlled.operation?.result
+  assert.deepEqual(calls, ['python'])
+  assert.equal(runtime.current.kind, 'ready')
+  assert.match(runtime.view().managed?.python.error ?? '', /test Python download failed/)
+  assert.ok(runtime.view().managed?.node.executable)
+})
 
 test('upgrade commits the validated runtime and preserves skills, configuration and state', async context => {
   const { runtime, controlled, markerFile, originalMarker, home, oldRoot, settings, legacyFiles, candidate } = upgradeFixture(context)

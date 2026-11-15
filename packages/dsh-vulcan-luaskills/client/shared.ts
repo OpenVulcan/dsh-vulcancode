@@ -62,6 +62,15 @@ export interface LuaSkillsSettings {
 /** Mirrors `TEXT_ENCODINGS` in `src/settings.ts`. */
 export const TEXT_ENCODINGS = ['utf-8', 'system', 'oem', 'gbk', 'gb18030', 'latin1', 'base64'] as const
 
+/** Mirror the interpreter directory, versions and installation status reported by the Host.
+ * 镜像宿主报告的解释器目录、版本和安装状态。 */
+export interface ManagedStatus {
+  readonly version: string
+  readonly packageManagerVersion: string
+  readonly executable: string | null
+  readonly error?: string
+}
+
 /** Mirrors `RuntimeView` in `src/runtime.ts`. */
 export interface RuntimeView {
   readonly state: RuntimeState
@@ -74,6 +83,9 @@ export interface RuntimeView {
   readonly settingsSource: 'defaults' | 'saved' | 'invalid'
   readonly settingsError?: string
   readonly hubSites: readonly { readonly site: 'global' | 'cn'; readonly url: string }[]
+  readonly managed?: { readonly root: string; readonly node: ManagedStatus; readonly python: ManagedStatus }
+  readonly managedInstalling?: 'node' | 'python'
+  readonly managedError?: string
 }
 
 /** Mirrors `SkillRow` in `src/index.ts`. */

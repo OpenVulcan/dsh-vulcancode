@@ -122,6 +122,7 @@ body[data-ds-dark-theme] .vac {
 .vls-row-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
 .vls-row-main .vac-hint { overflow-wrap: anywhere; }
 .vls-tools { margin: 0; color: var(--vk-ink-3); font-size: 11px; overflow-wrap: anywhere; }
+.vls-env-path { overflow-wrap: anywhere; }
 
 /* Let the search field shrink while keeping actions and the page number readable.
  * 允许搜索框缩窄，同时保持按钮与页码清晰可读。 */

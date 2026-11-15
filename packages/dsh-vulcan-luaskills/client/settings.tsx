@@ -6,7 +6,7 @@
 import { useEffect, useState } from 'react'
 
 import { fill, type Key, type Translate } from './i18n'
-import { RuntimeSection, useRuntime } from './runtime'
+import { ManagedRuntimeSection, RuntimeSection, useRuntime } from './runtime'
 import {
   callHost, isInstalled, messageOf, TEXT_ENCODINGS, type HostWatch, type LuaSkillsSettings, type RuntimeView,
 } from './shared'
@@ -24,6 +24,7 @@ export function SettingsPage({ view, t }: { view: HostWatch<RuntimeView | null>;
           : (
             <>
               <RuntimeSection view={view} live={live} t={t} />
+              <ManagedRuntimeSection view={view} live={live} t={t} />
               <SettingsSection view={view} live={live} t={t} />
             </>
           )}
