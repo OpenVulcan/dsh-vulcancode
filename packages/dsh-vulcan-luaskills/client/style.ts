@@ -123,8 +123,13 @@ body[data-ds-dark-theme] .vac {
 .vls-row-main .vac-hint { overflow-wrap: anywhere; }
 .vls-tools { margin: 0; color: var(--vk-ink-3); font-size: 11px; overflow-wrap: anywhere; }
 
-.vls-search { width: 100%; height: 32px; font-size: 13px; }
-.vls-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: calc(var(--vk-u) * 2.5); margin: 0; padding: 0; list-style: none; }
+/* Let the search field shrink while keeping actions and the page number readable.
+ * 允许搜索框缩窄，同时保持按钮与页码清晰可读。 */
+.vls-search-form { display: flex; align-items: center; gap: calc(var(--vk-u) * 2); }
+.vls-search { flex: 1; min-width: 0; height: 32px; font-size: 13px; }
+.vls-search-form .vac-btn { flex: none; min-height: 32px; }
+.vls-pagination { justify-content: center; }
+.vls-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: calc(var(--vk-u) * 2.5); margin: 0; padding: 0; list-style: none; }
 .vls-card { display: flex; flex-direction: column; gap: calc(var(--vk-u) * 1.5); padding: calc(var(--vk-u) * 3); border: 1px solid var(--vk-line); background: var(--vk-panel); min-width: 0; }
 .vls-card:hover { border-color: var(--vk-line-strong); }
 .vls-card .vac-hint { overflow-wrap: anywhere; }

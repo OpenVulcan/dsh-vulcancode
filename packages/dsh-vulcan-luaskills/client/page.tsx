@@ -14,9 +14,14 @@ import {
 
 type Tab = 'installed' | 'hub'
 
+/** Render the skills page with a shared runtime view, translations and a Settings shortcut.
+ * 使用共享运行状态、翻译函数和设置入口渲染技能页面。 */
 export function LuaSkillsPage({ view, t, openSettings }: { view: HostWatch<RuntimeView | null>; t: Translate; openSettings: () => void }) {
   const live = useRuntime(view)
   const [tab, setTab] = useState<Tab>('installed')
+  // Load the Hub on its first visit and keep it mounted so returning preserves the page.
+  // 首次打开 Hub 时加载，切换标签后保留当前页。
+  const [hubVisited, setHubVisited] = useState(false)
   const ready = live?.state.kind === 'ready'
   // Installed skills, read again after every change; shared with the Hub tab's installed marks.
   const [skills, setSkills] = useState<readonly SkillRow[] | undefined>(undefined)
@@ -56,17 +61,22 @@ export function LuaSkillsPage({ view, t, openSettings }: { view: HostWatch<Runti
         ) : null}
         <div className="vls-tabs" role="tablist">
           {(['installed', 'hub'] as const).map(name => (
-            <button key={name} type="button" role="tab" aria-selected={tab === name} className={tab === name ? 'vls-tab on' : 'vls-tab'} onClick={() => { setTab(name) }}>
+            <button key={name} type="button" role="tab" aria-selected={tab === name} className={tab === name ? 'vls-tab on' : 'vls-tab'} onClick={() => {
+              if (name === 'hub') setHubVisited(true)
+              setTab(name)
+            }}>
               {t(`tab.${name}` as Key)}
             </button>
           ))}
         </div>
-        {/* Both stay mounted, so Hub results survive a look at the installed list. */}
         <div hidden={tab !== 'installed'}>
           <Installed skills={skills} error={skillsError} ready={ready} reload={reload} t={t} />
         </div>
         <div hidden={tab !== 'hub'}>
-          <Hub live={live ?? null} ready={ready} installed={skills ?? []} reload={reload} view={view} t={t} />
+          {hubVisited && live != null ? (
+            <Hub key={JSON.stringify([live.settings.network.officialSkillHubBaseUrl, t('hubLang')])}
+              live={live} ready={ready} installed={skills ?? []} reload={reload} view={view} t={t} />
+          ) : null}
         </div>
       </div>
     </div>
@@ -188,8 +198,32 @@ function Installed({ skills, error, ready, reload, t }: {
   )
 }
 
+/** Store the submitted query, cursor history and the page being requested.
+ * 保存已提交的关键词、游标历史及当前请求的页码。 */
+interface CatalogRequest {
+  /** Submitted query used for all pages in this search.
+   * 此次搜索所有页面共用的已提交关键词。 */
+  readonly query: string
+  /** Ordered cursor history, starting with a null cursor for the first page.
+   * 按页排列的游标历史，第一页的游标为 null。 */
+  readonly cursors: readonly (string | null)[]
+  /** Zero-based page index into the cursor history.
+   * 游标历史中的页码索引，从零开始。 */
+  readonly index: number
+}
+
+/** Associate a page or request failure with the navigation that produced it.
+ * 将页面结果或请求错误关联到对应的翻页或搜索操作。 */
+type CatalogResponse =
+  | { readonly request: CatalogRequest; readonly page: HubPage }
+  | { readonly request: CatalogRequest; readonly error: string }
+
+/** Browse the selected site, showing one page of results with detail and installation actions.
+ * 浏览当前站点，每次显示一页，并提供详情与安装操作。
+ * The runtime view supplies the catalog site, installed IDs determine badges, and reload and view.refresh update host state.
+ * 运行状态提供当前站点，已安装技能决定徽标，reload 与 view.refresh 刷新宿主状态。 */
 function Hub({ live, ready, installed, reload, view, t }: {
-  live: RuntimeView | null
+  live: RuntimeView
   ready: boolean
   installed: readonly SkillRow[]
   reload: () => void
@@ -197,39 +231,62 @@ function Hub({ live, ready, installed, reload, view, t }: {
   t: Translate
 }) {
   const [query, setQuery] = useState('')
-  const [items, setItems] = useState<readonly HubSkill[] | undefined>(undefined)
-  const [cursor, setCursor] = useState<string | null>(null)
-  const [last, setLast] = useState('')
-  const [loading, setLoading] = useState(false)
+  // An empty query lists the catalog. Navigation replaces this request and starts a fetch.
+  // 空关键词用于浏览完整目录。搜索或翻页时替换请求以触发加载。
+  const [request, setRequest] = useState<CatalogRequest>({ query: '', cursors: [null], index: 0 })
+  const [response, setResponse] = useState<CatalogResponse | undefined>(undefined)
+  // Render only the response belonging to the navigation currently on screen.
+  // 只渲染与当前搜索或翻页操作对应的结果。
+  const result = response?.request === request ? response : undefined
+  const page = result !== undefined && 'page' in result ? result.page : undefined
+  const loading = result === undefined
   const [error, setError] = useState<string | undefined>(undefined)
   const [installing, setInstalling] = useState<string | undefined>(undefined)
   const [detail, setDetail] = useState<HubDetail | undefined>(undefined)
   const [switching, setSwitching] = useState(false)
   const lang = t('hubLang')
-  const hub = live?.settings.network.officialSkillHubBaseUrl
-  const site = live?.hubSites.find(item => item.url === hub)?.site
+  const hub = live.settings.network.officialSkillHubBaseUrl
+  const site = live.hubSites.find(item => item.url === hub)?.site
 
-  // The Hub limits searches per address, so it is asked only on Enter and on "load more".
-  const search = (text: string, after: string | null) => {
-    setLoading(true)
-    setError(undefined)
-    const params = new URLSearchParams({ q: text, lang })
-    if (after !== null) params.set('cursor', after)
-    callHost<HubPage>('GET', `hub/search?${params.toString()}`).then((page) => {
-      setItems(previous => (after === null ? page.items : [...previous ?? [], ...page.items]))
-      setCursor(page.nextCursor)
-      setLast(text)
-    }, (failure: unknown) => { setError(messageOf(failure)) }).finally(() => { setLoading(false) })
-  }
-  // A new site means a new catalog.
   useEffect(() => {
-    setItems(undefined)
-    setCursor(null)
-  }, [hub])
+    // Ignore responses from a superseded request or a Hub that has switched sites.
+    // 忽略已被替换的请求，以及站点切换前尚未返回的请求。
+    let current = true
+    const params = new URLSearchParams({ q: request.query, lang })
+    const cursor = request.cursors[request.index]
+    if (typeof cursor === 'string') params.set('cursor', cursor)
+    void callHost<HubPage>('GET', `hub/search?${params.toString()}`).then((page) => {
+      if (current) setResponse({ request, page })
+    }, (failure: unknown) => {
+      if (current) setResponse({ request, error: messageOf(failure) })
+    })
+    return () => { current = false }
+  }, [lang, request])
+
+  /** Start a new search at the first page using the supplied text.
+   * 使用传入的关键词发起新搜索，从第一页开始。 */
+  const search = (text: string) => {
+    setError(undefined)
+    setRequest({ query: text.trim(), cursors: [null], index: 0 })
+  }
+  /** Submit the current search field and return to the first page.
+   * 提交当前搜索框内容，并回到第一页。 */
   const submit = (event: FormEvent) => {
     event.preventDefault()
-    search(query, null)
+    search(query)
   }
+  /** Move back using the cursor previously recorded for that page.
+   * 使用该页此前记录的游标向前翻页。 */
+  const previous = () => {
+    setRequest({ ...request, index: request.index - 1 })
+  }
+  /** Move forward using the current response's opaque cursor.
+   * 使用本页响应返回的不透明游标向后翻页。 */
+  const next = (cursor: string) => {
+    setRequest({ ...request, cursors: [...request.cursors.slice(0, request.index + 1), cursor], index: request.index + 1 })
+  }
+  /** Install the selected Hub skill and refresh the installed badges on success.
+   * 安装选中的 Hub 技能，成功后刷新已安装标记。 */
   const install = (skill: HubSkill) => {
     setInstalling(skill.skill_id)
     setError(undefined)
@@ -238,12 +295,16 @@ function Hub({ live, ready, installed, reload, view, t }: {
       (failure: unknown) => { setError(messageOf(failure)) },
     ).finally(() => { setInstalling(undefined) })
   }
+  /** Open the selected skill's details in the current Hub language.
+   * 按当前 Hub 语言打开所选技能的详情。 */
   const open = (skill: HubSkill) => {
     setError(undefined)
     callHost<HubDetail>('GET', `hub/skill?${new URLSearchParams({ id: skill.skill_id, lang }).toString()}`).then(setDetail, (failure: unknown) => { setError(messageOf(failure)) })
   }
+  /** Save the target site's URL and refresh the shared runtime view.
+   * 保存目标站点地址并刷新共享运行状态。 */
   const switchSite = (url: string) => {
-    if (live == null || url === hub) return
+    if (url === hub) return
     setSwitching(true)
     setError(undefined)
     callHost('POST', 'settings', { ...live.settings, network: { ...live.settings.network, officialSkillHubBaseUrl: url } })
@@ -263,7 +324,7 @@ function Hub({ live, ready, installed, reload, view, t }: {
           <p className="vac-section-lead vac-mono">{hub}</p>
         </div>
         <span className="vac-inline" title={t('hub.siteHint')}>
-          {live?.hubSites.map(item => (
+          {live.hubSites.map(item => (
             <button
               key={item.site}
               type="button"
@@ -274,19 +335,35 @@ function Hub({ live, ready, installed, reload, view, t }: {
               {t(`hub.site.${item.site}` as Key)}
             </button>
           ))}
-          {site === undefined && hub !== undefined ? <span className="vls-seg on">{t('hub.site.custom')}</span> : null}
+          {site === undefined ? <span className="vls-seg on">{t('hub.site.custom')}</span> : null}
         </span>
       </div>
       <div className="vac-section-body">
-        <form onSubmit={submit}>
-          <input className="vls-input vls-search" type="search" placeholder={t('hub.search')} value={query} onChange={(event) => { setQuery(event.target.value) }} />
+        <form className="vls-search-form" role="search" onSubmit={submit}>
+          <input className="vls-input vls-search" type="search" aria-label={t('hub.search')} placeholder={t('hub.search')}
+            value={query} onChange={(event) => { setQuery(event.target.value) }} />
+          <button type="submit" className="vac-btn" disabled={switching}>{t('hub.searchButton')}</button>
+          {query !== '' || request.query !== '' ? (
+            <button type="button" className="vac-btn" disabled={switching} onClick={() => {
+              setQuery('')
+              search('')
+            }}>{t('hub.clear')}</button>
+          ) : null}
         </form>
         {error === undefined ? null : <p className="vac-error" role="alert">{error}</p>}
-        {items === undefined ? <p className="vac-hint">{loading ? t('loading') : t('hub.idle')}</p> : null}
-        {items !== undefined && items.length === 0 ? <p className="vac-hint">{t('hub.empty')}</p> : null}
-        {items === undefined || items.length === 0 ? null : (
+        {loading ? <p className="vac-hint" role="status">{t('loading')}</p> : null}
+        {result !== undefined && 'error' in result ? (
+          <div className="vac-inline">
+            <p className="vac-error" role="alert">{result.error}</p>
+            <button type="button" className="vac-btn sm" disabled={switching} onClick={() => { setRequest({ ...request }) }}>
+              {t('hub.retry')}
+            </button>
+          </div>
+        ) : null}
+        {page?.items.length === 0 ? <p className="vac-hint" role="status">{t(request.query === '' ? 'hub.empty' : 'hub.noMatches')}</p> : null}
+        {page === undefined || page.items.length === 0 ? null : (
           <ul className="vls-cards">
-            {items.map((skill) => {
+            {page.items.map((skill) => {
               const content = skill.content ?? undefined
               const summary = content?.summary || skill.summary
               const has = installedIds.has(skill.skill_id)
@@ -299,11 +376,11 @@ function Hub({ live, ready, installed, reload, view, t }: {
                       {content?.kind === 'translation' ? <span className="vac-badge info" title={t('hub.translatedTitle')}>{t('hub.translated')}</span> : null}
                     </span>
                     <span className="vac-inline">
-                      <button type="button" className="vac-btn sm ghost" onClick={() => { open(skill) }}>{t('hub.details')}</button>
+                      <button type="button" className="vac-btn sm ghost" disabled={switching} onClick={() => { open(skill) }}>{t('hub.details')}</button>
                       <button
                         type="button"
                         className="vac-btn sm"
-                        disabled={!ready || has || installing !== undefined}
+                        disabled={!ready || has || installing !== undefined || switching}
                         onClick={() => { install(skill) }}
                       >
                         {has ? t('hub.installed') : installing === skill.skill_id ? t('hub.installing') : t('hub.install')}
@@ -317,9 +394,18 @@ function Hub({ live, ready, installed, reload, view, t }: {
             })}
           </ul>
         )}
-        {cursor === null ? null : (
-          <button type="button" className="vac-btn" disabled={loading} onClick={() => { search(last, cursor) }}>{loading ? t('loading') : t('hub.more')}</button>
-        )}
+        {page !== undefined || request.index > 0 ? (
+          <nav className="vac-inline vls-pagination" aria-label={t('hub.pagination')}>
+            <button type="button" className="vac-btn sm" disabled={request.index === 0 || loading || switching} onClick={previous}>
+              {t('hub.previous')}
+            </button>
+            <span className="vac-hint vac-mono" aria-live="polite">{fill(t('hub.page'), { page: request.index + 1 })}</span>
+            <button type="button" className="vac-btn sm" disabled={page?.nextCursor == null || switching}
+              onClick={() => { if (page?.nextCursor != null) next(page.nextCursor) }}>
+              {t('hub.next')}
+            </button>
+          </nav>
+        ) : null}
       </div>
       {detail === undefined ? null : <HubDetailSheet detail={detail} close={() => { setDetail(undefined) }} t={t} />}
     </section>
