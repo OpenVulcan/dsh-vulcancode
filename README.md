@@ -35,6 +35,12 @@ dsh-vulcancode 是 DeepSeek Harness（dsh）的社区插件套件。安装一个
 - **模型可单独配置思考级别**，pi-ai 模型的可选级别和接口传输值可按供应商、按模型设置。
 - **语音输入**使用 OpenVulcan 账号所属站点的免费转写服务，把口述内容插入对话草稿。
 
+## 0.4.5 更新
+
+- **LuaSkills** 升级到 0.9.0。Hub 打开即显示技能列表，支持分页和搜索。「环境」页可查看受管 Node.js、Python、包管理器的版本和路径。安装或加载运行库时按需补装缺失项，并复用已就绪的运行时。
+- **平台兼容**。Windows 支持中文用户目录和安装路径，技能启动的受管进程默认隐藏控制台窗口。macOS 和 Linux 原生运行包修复了动态库加载与 FFI 符号解析。
+- **长期记忆**新增独立的 VMM 向量模式，支持对话前召回、回合后提炼记忆和画像、36 个地区的 PII 规则及可调噪声过滤。Markdown 仍是默认模式。切换到 VMM 后，可在「模型与服务」下载 VLDB 并授权使用 OpenVulcan 免费模型。
+
 ## 界面截图
 
 ### 暗色主题 · 工具分类卡片
@@ -73,7 +79,7 @@ dsh 通过套件的 `cordis.patch.yml` 装载八个插件。自动审批和语�
 
 在「设置 › LuaSkills」按需安装 LuaSkills 0.9.0 运行库和默认代码导航技能 CodeKit。已安装 0.7.2 或旧版运行包时，可在同一页面升级并保留技能、配置和启停状态。升级失败或取消后会恢复旧版。Windows 首次启动技能引擎时会下载专用 Node Worker，以支持中文路径。macOS 运行包需要 macOS 15.5 或更新版本。Linux 运行包支持 x64 和 ARM64，需要 glibc 2.35 或更新版本。
 
-侧栏「LuaSkills」可以管理本地技能、浏览 Hub，并在「环境」中查看受管 Node.js、Python 和配套包管理器的版本、可执行文件路径及安装状态。启用网络下载时，安装 LuaSkills 或加载已有运行库会补装缺失项，已就绪的解释器会直接复用。也可从「环境」或「设置 › LuaSkills」分别补装。源码在 [packages/dsh-vulcan-luaskills](packages/dsh-vulcan-luaskills)。
+侧栏「LuaSkills」可管理本地技能，在「Hub」按页浏览和搜索技能，也可在「环境」查看受管 Node.js、Python 和配套包管理器的版本、可执行文件路径及安装状态。启用网络下载时，安装 LuaSkills 或加载已有运行库会补装缺失项，已就绪的解释器会直接复用。也可从「环境」或「设置 › LuaSkills」分别补装。源码在 [packages/dsh-vulcan-luaskills](packages/dsh-vulcan-luaskills)。
 
 #### `@openvulcan/dsh-vulcan-memory`
 
@@ -124,6 +130,8 @@ VMM 与 Markdown 互斥，分别保存数据。切换后，下一次请求使用
 ```sh
 dsh plugin --profile web add @openvulcan/dsh-vulcancode
 ```
+
+如需指定版本，在桌面安装框或命令中使用 `@openvulcan/dsh-vulcancode@0.4.5`。
 
 ### 使用
 

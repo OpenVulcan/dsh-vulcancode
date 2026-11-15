@@ -35,6 +35,12 @@ DeepSeek develops dsh independently of this community project.
 - **Per-model thinking settings** for the levels shown in the pi-ai model picker and the values sent to each model endpoint.
 - **Voice input** uses the free transcription service on your OpenVulcan account's site and inserts the result into the conversation draft.
 
+## What's new in 0.4.5
+
+- **LuaSkills 0.9.0** opens the Hub with a paginated, searchable skills list. The Environment tab shows managed Node.js, Python, and their package managers. LuaSkills provisions missing runtimes on demand and reuses ready installations.
+- **Platform compatibility.** Windows supports non-ASCII user and installation paths, and managed skill processes hide their console windows. The macOS and Linux runtime archives fix native library loading and FFI symbol resolution.
+- **Long-term memory** adds a separate VMM vector mode with pre-chat recall, turn-end memory and profile distillation, PII rules for 36 regions, and configurable noise filtering. Markdown remains the default. In VMM mode, download VLDB and authorize the free OpenVulcan models from Models and Services.
+
 ## Screenshots
 
 ### Dark theme · Tool categories
@@ -71,7 +77,7 @@ Renders the model's `ui-*` code fences in chat as comparisons, charts, flowchart
 
 #### `@openvulcan/dsh-vulcan-luaskills`
 
-Install the roughly 280 MB LuaSkills 0.9.0 runtime and CodeKit in Settings › LuaSkills. Upgrading from 0.7.2 keeps installed skills, settings, and enabled states. If the upgrade fails or is cancelled, the previous runtime resumes. Settings cover VM pools, the tool cache, managed Python and Node runtimes, and network access. Use the LuaSkills sidebar page to manage installed skills or install new ones from the Hub. See [packages/dsh-vulcan-luaskills](packages/dsh-vulcan-luaskills).
+Install the LuaSkills 0.9.0 runtime and CodeKit in Settings › LuaSkills. Upgrading from 0.7.2 keeps installed skills, settings, and enabled states. If the upgrade fails or is cancelled, the previous runtime resumes. The LuaSkills sidebar page lets you manage installed skills, browse or search the Hub by page, and inspect or provision managed runtimes in Environment. Windows downloads a dedicated Node worker on first engine startup to support non-ASCII paths. The macOS runtime requires macOS 15.5 or later. The Linux runtime supports x64 and ARM64 with glibc 2.35 or later. See [packages/dsh-vulcan-luaskills](packages/dsh-vulcan-luaskills).
 
 #### `@openvulcan/dsh-vulcan-memory`
 
@@ -119,6 +125,8 @@ Open **Plugins** from the dsh sidebar, click **Add plugin**, and paste the follo
 dsh plugin --profile web add @openvulcan/dsh-vulcancode
 ```
 
+To pin this release, use `@openvulcan/dsh-vulcancode@0.4.5` in the desktop installer or the CLI command.
+
 ### Usage
 
 1. Restart dsh after installing. For cloud judgment, complete browser authorization in Settings › OpenVulcan account. Local judgment works without signing in.
@@ -140,8 +148,9 @@ dsh plugin --profile web add @openvulcan/dsh-vulcancode
 pnpm install
 pnpm run build
 pnpm run test
-pnpm run pack:dsh   # writes dist/openvulcan-dsh-vulcancode-<version>.tgz
 ```
+
+Prepare the four Unix LuaSkills runtime archives before running `pnpm run pack:dsh`. See the [runtime preparation instructions](README.md#开发). The command writes `dist/openvulcan-dsh-vulcancode-<version>.tgz`.
 
 Install a local tarball in the Web profile with `dsh plugin --profile web add ./dist/openvulcan-dsh-vulcancode-<version>.tgz`.
 
