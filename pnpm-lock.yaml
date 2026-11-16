@@ -229,6 +229,9 @@ importers:
       '@node-rs/jieba':
         specifier: 2.0.4
         version: 2.0.4
+      '@openvulcan/dsh-runtime-download':
+        specifier: workspace:*
+        version: link:../dsh-runtime-download
       '@openvulcan/openvulcan-account':
         specifier: workspace:*
         version: link:../openvulcan-account

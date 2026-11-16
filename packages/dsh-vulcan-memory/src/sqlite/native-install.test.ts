@@ -20,9 +20,11 @@ test('damaged native cache is unavailable and can be downloaded again', async (t
     await writeFile(file, '')
     assert.equal(await nativeStatus(root), 'damaged')
     assert.equal(await libraryPath(root), null)
-    const download = t.mock.method(globalThis, 'fetch', async () => new Response(null, { status: 503 }))
-    await assert.rejects(installNative(root), /HTTP 503/)
+    const mirror = 'https://ghfast.top/https://github.com'
+    const download = t.mock.method(globalThis, 'fetch', async (_input: RequestInfo | URL) => new Response(null, { status: 503 }))
+    await assert.rejects(installNative(root, mirror), /HTTP 503/)
     assert.equal(download.mock.callCount(), 1)
+    assert.match(String(download.mock.calls[0]?.arguments[0]), /^https:\/\/ghfast\.top\/https:\/\/github\.com\/OpenVulcan\/vldb-lancedb\/releases\//)
     assert.equal(await nativeStatus(root), 'damaged')
   } finally { await rm(root, { recursive: true, force: true }) }
 })

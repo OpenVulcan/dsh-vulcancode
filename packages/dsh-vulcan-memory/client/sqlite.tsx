@@ -28,6 +28,13 @@ interface CloudStatus {
   } | null
 }
 
+/** Mirror choices and the currently saved VLDB download source.
+ *  VLDB 下载镜像选项与当前已保存的下载源。 */
+interface NativeMirrors {
+  readonly choices: readonly { readonly label: string; readonly base: string }[]
+  readonly selected: string | null
+}
+
 // Hold an unsaved editor draft and its revision when editing an existing row.
 // 保存未提交的编辑草稿，编辑已有记录时携带版本。
 type Draft = { scope: MemoryScope; title: string; body: string; entry?: Entry }
@@ -38,6 +45,9 @@ export function SqlitePage({ t, tab }: { t: Translate; tab: 'sqlite' | 'models' 
   // Keep editor and search state apart from the server's record list.
   // 将编辑与检索状态和服务端记录列表分开。
   const [status, setStatus] = useState<CloudStatus>()
+  // Load the mirror independently from the OpenVulcan cloud offer.
+  // 独立于 OpenVulcan 云端方案加载镜像列表。
+  const [mirrors, setMirrors] = useState<NativeMirrors>()
   const [projects, setProjects] = useState<HostProject[]>([])
   const [entries, setEntries] = useState<Entry[]>()
   const [results, setResults] = useState<Entry[]>()
@@ -60,6 +70,14 @@ export function SqlitePage({ t, tab }: { t: Translate; tab: 'sqlite' | 'models' 
   useEffect(() => {
     void refresh().catch((failure: unknown) => { setError(messageOf(failure)) })
   }, [refresh])
+  useEffect(() => {
+    if (tab !== 'models') return
+    let active = true
+    void callHost<NativeMirrors>('GET', 'sqlite/mirrors').then(value => {
+      if (active) setMirrors(value)
+    }, (failure: unknown) => { if (active) setError(messageOf(failure)) })
+    return () => { active = false }
+  }, [tab])
   useEffect(() => {
     if (tab !== 'sqlite') return
     let active = true
@@ -166,10 +184,29 @@ export function SqlitePage({ t, tab }: { t: Translate; tab: 'sqlite' | 'models' 
       }>
         {status === undefined ? <p className="vac-hint">{t('loading')}</p> : <>
           <p className="vac-hint">{t(`sql.native.${status.native}`)} · {status.version}</p>
+          {mirrors !== undefined && status.native !== 'unsupported' && <label className="vmm-field">
+            {t('sql.mirror')}
+            <select className="vmm-select" value={mirrors.selected ?? ''} disabled={busy !== ''} onChange={event => {
+              // Persist the choice before the next download starts.
+              // 在下次下载开始前保存镜像选择。
+              const selected = event.target.value === '' ? null : event.target.value
+              void perform(t('save'), async () => {
+                await callHost('POST', 'sqlite/mirrors', { mirror: selected })
+                setMirrors({ ...mirrors, selected })
+              })
+            }}>
+              <option value="">{t('sql.mirrorAuto')}</option>
+              {mirrors.choices.map(mirror => <option key={mirror.base} value={mirror.base}>{mirror.label}</option>)}
+            </select>
+          </label>}
           {(status.native === 'missing' || status.native === 'damaged') &&
-            <button type="button" className="vac-btn sm" disabled={busy !== ''} onClick={() => {
+            <button type="button" className="vac-btn sm" disabled={busy !== '' || mirrors === undefined} onClick={() => {
               void perform(t(status.native === 'damaged' ? 'sql.repair' : 'sql.download'),
-                async () => { await callHost('POST', 'sqlite/install'); await refresh() })
+                async () => {
+                  try { await callHost('POST', 'sqlite/install') }
+                  catch (failure) { throw new Error(`${t('sql.mirrorFailed')} ${messageOf(failure)}`) }
+                  await refresh()
+                })
             }}>{t(status.native === 'damaged' ? 'sql.repair' : 'sql.download')}</button>}
           {offer == null ? <p className="vac-hint">{t(status.cloudError ? 'sql.cloudError' : 'sql.noOffer')}</p> : <>
             <div className="vac-between"><strong>{offer.name} · {t(`sql.site.${offer.site}`)}</strong>

@@ -5,6 +5,7 @@ import { lstat, mkdir, rename, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { unzipSync } from 'fflate'
+import { GITHUB_MIRRORS, githubUrl, selectGitHubMirror } from '@openvulcan/dsh-runtime-download'
 
 // Pin archive and extracted library sizes and digests from the verified VLDB release.
 // 固定已验证 VLDB 发行包及其解压后库文件的大小和摘要。
@@ -75,12 +76,14 @@ export async function libraryPath(root: string): Promise<string | null> {
 
 /** Fetch and verify the pinned archive, then publish only the library into the local cache.
  *  下载并校验固定版本的压缩包，再将单个库文件发布到本地缓存。 */
-export async function installNative(root: string): Promise<void> {
+export async function installNative(root: string, configured: string | null = null, signal?: AbortSignal): Promise<void> {
   const release = target(root)
   if (release === null) throw new Error('VLDB is unavailable on this platform.')
   if (await cacheState(release) === 'installed') return
-  const base = `https://github.com/OpenVulcan/vldb-lancedb/releases/download/${NATIVE_VERSION}`
-  const response = await fetch(`${base}/${release.archive}`, { signal: AbortSignal.timeout(180_000) })
+  const asset = `https://github.com/OpenVulcan/vldb-lancedb/releases/download/${NATIVE_VERSION}/${release.archive}`
+  const mirror = await selectGitHubMirror(asset, configured, signal)
+  const timeout = AbortSignal.timeout(180_000)
+  const response = await fetch(githubUrl(asset, mirror), { signal: signal === undefined ? timeout : AbortSignal.any([signal, timeout]) })
   if (!response.ok || response.body === null) throw new Error(`VLDB download failed (HTTP ${response.status}).`)
   const bytes = Buffer.alloc(release.archiveSize)
   let length = 0
@@ -112,6 +115,7 @@ export async function installNative(root: string): Promise<void> {
       || createHash('sha256').update(library).digest('hex') !== release.libraryHash) {
       throw new Error('Extracted VLDB library failed SHA-256 verification.')
     }
+    signal?.throwIfAborted()
     await writeFile(temp, library, { flag: 'wx', mode: 0o700 })
     // Atomically replace damaged data, accepting a valid concurrent install when Windows locks the destination.
     // 原子替换损坏数据。Windows 锁定目标时，接受并发安装已发布的正确文件。
@@ -127,3 +131,7 @@ export async function installNative(root: string): Promise<void> {
     }
   }
 }
+
+// The selector exposes the same verified release routes as the LuaSkills installer.
+// 选择器提供与 LuaSkills 安装程序相同的、具备资产校验的发行下载路径。
+export const nativeMirrors = GITHUB_MIRRORS

@@ -115,9 +115,10 @@ export class StructuredMemory {
 
   /** Download the runtime on explicit request, deduplicating requests within this process.
    *  由用户显式请求下载运行库，在当前进程内合并重复请求。 */
-  async install(): Promise<void> {
+  async install(mirror: string | null): Promise<void> {
     this.assertEnabled()
-    this.download ??= installNative(this.root).finally(() => { this.download = undefined })
+    this.download ??= installNative(this.root, mirror, AbortSignal.any([this.lifetime.signal, this.modeLifetime.signal]))
+      .finally(() => { this.download = undefined })
     await this.download
   }
 

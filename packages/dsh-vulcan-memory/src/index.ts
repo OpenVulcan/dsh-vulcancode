@@ -36,6 +36,8 @@ import * as page from './page.js'
 import { projectContext } from './project.js'
 import { loadSettings, type SavedMemorySettings } from './settings.js'
 import { StructuredMemory } from './sqlite/service.js'
+import { nativeMirrors } from './sqlite/native-install.js'
+import { writeAtomically } from './markdown/store.js'
 import { consentSchema, mutationSchema } from './sqlite/store.js'
 import { foldSqliteRecall, recallStateSchema, SQLITE_RECALL_PROJECTION, updateSqliteRecall, type RecallState } from './sqlite/recall.js'
 import { clearInactiveMemory, filterMemoryForCompaction, foldModeContext, INITIAL_MODE_CONTEXT, MODE_CONTEXT_PROJECTION,
@@ -85,6 +87,20 @@ const OUTPUT: ToolDefinition['output'] = {
 
 export async function apply(ctx: Context): Promise<void> {
   const memoryDirectory = path.join(resolveDshHome(), 'vulcan-memory')
+  // Store the VLDB choice separately from the memory mode and cloud consent.
+  // VLDB 镜像选择与记忆模式、云服务授权分别保存。
+  const mirrorFile = path.join(memoryDirectory, 'vldb-mirror')
+  /** Read the saved built-in base, or return automatic mode for a new installation.
+   *  读取已保存的内置基址，新安装时返回自动模式。 */
+  const nativeMirror = (): string | null => {
+    try {
+      const base = readFileSync(mirrorFile, 'utf8').trim()
+      return nativeMirrors.some(entry => entry.base === base) ? base : null
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+      throw error
+    }
+  }
   const store = new markdown.MarkdownMemoryStore(memoryDirectory)
   const guide = readFileSync(path.join(ASSETS, 'markdown-memory-guide.md'), 'utf8')
   const skill = parseSkill(readFileSync(path.join(ASSETS, SKILL_NAME, 'SKILL.md'), 'utf8'))
@@ -439,7 +455,18 @@ export async function apply(ctx: Context): Promise<void> {
         const category = detectNoise(redactText(text, store.pii(region)).text, store.noiseRules(policy))
         return { category }
       }],
-      ['POST', 'sqlite/install', async () => { await structured.install(); scheduleIndex() }],
+      ['GET', 'sqlite/mirrors', async () => ({ choices: nativeMirrors, selected: nativeMirror() })],
+      ['POST', 'sqlite/mirrors', async request => {
+        // A built-in base or null selects a verified VLDB asset source for this installation.
+        // 内置基址或空值为本次安装选择可校验的 VLDB 资产来源。
+        const { mirror } = validated(z.object({ mirror: z.string().nullable() }).strict(), await readJson(request))
+        if (mirror !== null && !nativeMirrors.some(entry => entry.base === mirror)) throw MemoryError.invalid('Unknown download mirror.')
+        writeAtomically(mirrorFile, `${mirror ?? ''}\n`)
+      }],
+      ['POST', 'sqlite/install', async () => {
+        await structured.install(nativeMirror())
+        scheduleIndex()
+      }],
       ['POST', 'sqlite/consent', async request => {
         await structured.consent(validated(consentSchema.nullable(), await readJson(request)))
         scheduleIndex()
