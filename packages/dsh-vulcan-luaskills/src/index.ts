@@ -21,11 +21,11 @@ import type {} from '@openvulcan/dsh-vulcan-account'
 import { GITHUB_MIRRORS, githubUrl, mirrorBase, probeSources } from '@openvulcan/dsh-runtime-download'
 
 import { READ_ONLY_ENTRIES } from './constants.js'
-import { HubError, hubSkill, searchHub } from './hub.js'
+import { HubError, hubSkill, searchHub, type HubDetail } from './hub.js'
 import type { EntryDescriptor, SkillHelp } from './protocol.js'
 import { LuaSkillsRuntime, RuntimeError } from './runtime.js'
 import { SettingsError } from './settings.js'
-import { listInstalled, type InstalledSkill } from './skills.js'
+import { listInstalled, readHubSummary, saveHubSummary, type InstalledSkill } from './skills.js'
 import { helpTool, skillTool, toolName } from './tools.js'
 import { LUA_MIRROR_SAMPLE } from './runtime-downloads.js'
 
@@ -53,6 +53,9 @@ const HUB_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 export interface SkillRow extends InstalledSkill {
   readonly loaded: boolean
   readonly tools: readonly string[]
+  // Cached introduction returned by the Hub, separate from the package's own help.
+  // Hub 返回的缓存介绍，与包自身的帮助介绍分开。
+  readonly hubSummary?: string
 }
 
 export function apply(ctx: Context): void {
@@ -74,6 +77,9 @@ export function apply(ctx: Context): void {
   const writeTools = new Map<string, string>()
   /** Canonical name → dsh tool name, for the skill guides. */
   let toolNames = new Map<string, string>()
+  // Group registered tools by the SDK's explicit root and skill ownership.
+  // 按 SDK 明确的根目录与技能归属对已注册工具分组。
+  let toolsBySkill = new Map<string, string[]>()
   let catalog: readonly SkillHelp[] = []
   let skillControl: SkillProviderControl | undefined
   let generation = 0
@@ -103,6 +109,7 @@ export function apply(ctx: Context): void {
     disposers = []
     writeTools.clear()
     toolNames = new Map()
+    toolsBySkill = new Map()
     catalog = help
     if (entries.length > 0 || help.length > 0) {
       const ours = new Set<string>()
@@ -126,6 +133,10 @@ export function apply(ctx: Context): void {
         }
         if (!register(skillTool(tool, entry, toolHost))) continue
         toolNames.set(entry.canonical_name, tool)
+        const owner = `${entry.root_name}:${entry.skill_id}`
+        const owned = toolsBySkill.get(owner)
+        if (owned === undefined) toolsBySkill.set(owner, [tool])
+        else owned.push(tool)
         if (!READ_ONLY_ENTRIES.has(entry.canonical_name)) writeTools.set(tool, entry.canonical_name)
       }
     }
@@ -206,18 +217,22 @@ export function apply(ctx: Context): void {
 
   const skillRows = async (): Promise<SkillRow[]> => {
     const installed = listInstalled(runtime.runtimeRoot)
-    const loaded = new Set(catalog.map(help => help.skill_id))
-    const tools = [...toolNames]
-    return installed.map(skill => ({
-      ...skill,
-      loaded: loaded.has(skill.skillId),
-      tools: tools.filter(([canonical]) => canonical.startsWith(`${skill.skillId}-`)).map(([, tool]) => tool),
-    }))
+    return installed.map(skill => {
+      const help = catalog.find(item => item.root_name === skill.root && item.skill_id === skill.skillId)
+      const hubSummary = skill.source?.type === 'official_hub' ? readHubSummary(runtime.runtimeRoot, skill.source.locator, skill.version) : undefined
+      return {
+        ...skill,
+        ...(hubSummary === undefined ? {} : { hubSummary }),
+        loaded: help !== undefined,
+        tools: toolsBySkill.get(`${skill.root}:${skill.skillId}`) ?? [],
+      }
+    })
   }
 
   const findSkill = (url: URL): InstalledSkill => {
     const id = url.searchParams.get('id') ?? ''
-    const skill = listInstalled(runtime.runtimeRoot).find(item => item.skillId === id)
+    const root = url.searchParams.get('root')
+    const skill = listInstalled(runtime.runtimeRoot).find(item => item.skillId === id && (root === null || item.root === root))
     if (skill === undefined) throw new RuntimeError(`no installed skill ${id}`, 'invalid_request')
     return skill
   }
@@ -229,6 +244,30 @@ export function apply(ctx: Context): void {
     } finally {
       await refresh()
     }
+  }
+
+  /** Extract the same localized introduction shown by the Hub.
+   *  提取与 Hub 页面一致的本地化介绍。 */
+  const introduction = (detail: HubDetail): string | undefined => {
+    const content = detail.skill.content ?? detail.original
+    return [content?.intro, content?.summary, detail.skill.summary].find(text => typeof text === 'string' && text.trim() !== '')?.trim()
+  }
+
+  /** Cache the Hub description asynchronously so metadata availability does not delay the card update.
+   *  异步保存 Hub 介绍，避免元数据可用性影响卡片更新。 */
+  const rememberIntroduction = (hub: string, id: string, version: string, locale: string | null): void => {
+    const root = runtime.runtimeRoot
+    void hubSkill(hub, id, locale).then(async detail => {
+      if (detail.latest.version !== version) return
+      const summary = introduction(detail)
+      if (summary === undefined) return
+      await runtime.useEngine(async () => {
+        if (runtime.runtimeRoot === root && listInstalled(root).some(skill => skill.source?.type === 'official_hub'
+          && skill.source.locator === id && skill.version === version)) {
+          await saveHubSummary(root, id, version, summary)
+        }
+      })
+    }).catch((error: unknown) => { ctx.logger.debug(`cannot cache LuaSkills Hub introduction: ${messageOf(error)}`) })
   }
 
   /** Validate a focused download preference without overwriting unrelated settings.
@@ -280,6 +319,12 @@ export function apply(ctx: Context): void {
     }],
     ['POST', 'settings', async request => runtime.saveSettings(await readJson(request))],
     ['GET', 'skills', () => skillRows()],
+    ['GET', 'skills/description', async (_request, url) => {
+      const skill = findSkill(url)
+      if (skill.source?.type !== 'official_hub') return skill.description ?? null
+      return readHubSummary(runtime.runtimeRoot, skill.source.locator, skill.version)
+        ?? introduction(await hubSkill(await runtime.hubUrl(), skill.source.locator, url.searchParams.get('lang'))) ?? null
+    }],
     ['POST', 'skills/enabled', async (_request, url) => {
       const skill = findSkill(url)
       const enabled = url.searchParams.get('enabled')
@@ -290,20 +335,51 @@ export function apply(ctx: Context): void {
       const skill = findSkill(url)
       if (skill.source === undefined) throw new RuntimeError(`${skill.skillId} was not installed from a source it can be updated from`, 'invalid_request')
       const source = skill.source
-      await runtime.prepareSkillDownload()
-      return await mutate(() => runtime.useEngine(engine => engine.update(skill.root, { skill_id: skill.skillId, source: source.locator, source_type: source.type })))
+      const hub = await runtime.prepareSkillDownload()
+      const result = await mutate(() => runtime.useEngine(engine => engine.update(skill.root, { skill_id: skill.skillId, source: source.locator, source_type: source.type })))
+      if (!['updated', 'up_to_date', 'installed'].includes(result.status)) throw new RuntimeError(result.message, 'invalid_request')
+      const updated = (await skillRows()).find(row => row.root === skill.root && row.skillId === skill.skillId)
+      if (updated === undefined) throw new RuntimeError('The updated LuaSkills package could not be read.')
+      if (source.type === 'official_hub' && updated.hubSummary === undefined) {
+        rememberIntroduction(hub, source.locator, updated.version, url.searchParams.get('lang'))
+      }
+      return { result, skill: updated }
     }],
     ['POST', 'skills/uninstall', async (_request, url) => {
       const skill = findSkill(url)
       if (skill.root !== 'USER') throw new RuntimeError(`${skill.skillId} is a default skill; it can be disabled, not removed`, 'invalid_request')
-      return await mutate(() => runtime.useEngine(engine => engine.uninstall('USER', skill.skillId)))
+      return await mutate(() => runtime.useEngine(async engine => {
+        const result = await engine.uninstall('USER', skill.skillId)
+        if (skill.source?.type === 'official_hub' && !listInstalled(runtime.runtimeRoot).some(row => row.root === 'USER' && row.skillId === skill.skillId)) {
+          await saveHubSummary(runtime.runtimeRoot, skill.source.locator, skill.version, undefined)
+        }
+        return result
+      }))
     }],
-    ['POST', 'skills/install', async (_request, url) => {
+    ['POST', 'skills/install', async (request, url) => {
       const id = url.searchParams.get('id') ?? ''
       if (!HUB_ID.test(id)) throw new RuntimeError('id must be a LuaSkills Hub skill id', 'invalid_request')
       const hub = await runtime.prepareSkillDownload()
       if (url.searchParams.get('hub') !== hub) throw new RuntimeError('The LuaSkills Hub changed. Refresh and retry.', 'invalid_request')
-      return await mutate(() => runtime.useEngine(engine => engine.install('USER', { skill_id: null, source: id, source_type: 'official_hub' })))
+      // Store the metadata the user saw when they chose to install the package.
+      // 保存用户选择安装技能时看到的元数据。
+      const summary = await readJson(request)
+      if (summary !== null && (typeof summary !== 'string' || summary.length > 16_384)) {
+        throw new RuntimeError('The Hub introduction is invalid.', 'invalid_request')
+      }
+      const result = await mutate(() => runtime.useEngine(async engine => {
+        const installed = await engine.install('USER', { skill_id: null, source: id, source_type: 'official_hub' })
+        if (summary !== null && installed.version != null && ['installed', 'updated'].includes(installed.status)) {
+          try { await saveHubSummary(runtime.runtimeRoot, id, installed.version, summary) }
+          catch (error) { ctx.logger.debug(`cannot save LuaSkills Hub introduction: ${messageOf(error)}`) }
+        }
+        return installed
+      }))
+      if (!['installed', 'updated', 'up_to_date', 'already_installed'].includes(result.status)) {
+        throw new RuntimeError(result.message, 'invalid_request')
+      }
+      if (summary === null && result.version != null) rememberIntroduction(hub, id, result.version, url.searchParams.get('lang'))
+      return result
     }],
     ['GET', 'hub/search', async (_request, url) => searchHub(await requestedHub(url), url.searchParams.get('q') ?? '', url.searchParams.get('cursor'), url.searchParams.get('lang'))],
     ['GET', 'hub/skill', async (_request, url) => hubSkill(await requestedHub(url), url.searchParams.get('id') ?? '', url.searchParams.get('lang'))],

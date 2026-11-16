@@ -101,6 +101,10 @@ export interface SkillRow {
   readonly enabled: boolean
   readonly loaded: boolean
   readonly tools: readonly string[]
+  // The locally declared package introduction and previously fetched Hub introduction.
+  // 本地包清单介绍，以及此前获取的 Hub 介绍。
+  readonly description?: string
+  readonly hubSummary?: string
   readonly source?: { readonly type: string; readonly locator: string }
 }
 

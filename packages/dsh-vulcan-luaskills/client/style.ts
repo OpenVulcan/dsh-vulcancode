@@ -122,7 +122,11 @@ body[data-ds-dark-theme] .vac {
 .vls-row-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
 .vls-row-main .vac-hint { overflow-wrap: anywhere; }
 .vls-mirror-row { padding-inline: 0; }
-.vls-tools { margin: 0; color: var(--vk-ink-3); font-size: 11px; overflow-wrap: anywhere; }
+.vls-tool-trigger { position: relative; display: inline-flex; }
+.vls-tool-tip { display: none; position: absolute; z-index: 10; top: 100%; right: 0; padding: 8px; width: max-content; max-width: min(370px, 70vw); max-height: min(280px, 45vh); overflow: auto; border: 1px solid var(--vk-line-strong); background: var(--vk-panel); color: var(--vk-ink); box-shadow: var(--vk-shadow-2); }
+.vls-tool-trigger:hover .vls-tool-tip, .vls-tool-trigger:focus-within .vls-tool-tip { display: block; }
+.vls-tool-tip ul { list-style: none; margin: 0; padding: 0; }
+.vls-tool-tip li { padding: 2px 0; overflow-wrap: anywhere; }
 .vls-env-path { overflow-wrap: anywhere; }
 
 /* Let the search field shrink while keeping actions and the page number readable.

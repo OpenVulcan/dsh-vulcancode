@@ -3,7 +3,7 @@
  * runtime both tabs can be looked at, and every action points at the install in Settings.
  */
 
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 
 import { fill, type Key, type Translate } from './i18n'
 import { DownloadMirrorSection, ManagedRuntimeSection, useRuntime } from './runtime'
@@ -37,19 +37,29 @@ export function LuaSkillsPage({ view, t, openSettings }: { view: HostWatch<Runti
   const [skills, setSkills] = useState<readonly SkillRow[] | undefined>(undefined)
   const [skillsError, setSkillsError] = useState<string | undefined>(undefined)
   const [generation, setGeneration] = useState(0)
+  // An earlier catalog response must not overwrite a newly updated card.
+  // 较早的目录响应不得覆盖刚更新的卡片。
+  const listRequest = useRef(0)
   const reload = () => { setGeneration(value => value + 1) }
+  /** Replace only the updated card with the installed manifest returned by the host.
+   *  使用主机返回的已安装清单替换对应卡片。 */
+  const replaceSkill = (row: SkillRow) => {
+    ++listRequest.current
+    setSkills(current => current?.map(skill => skill.root === row.root && skill.skillId === row.skillId ? row : skill))
+  }
   useEffect(() => {
     if (live == null || !isInstalled(live.state)) {
       setSkills([])
       return undefined
     }
     let current = true
+    const sequence = ++listRequest.current
     callHost<SkillRow[]>('GET', 'skills').then((rows) => {
-      if (!current) return
+      if (!current || sequence !== listRequest.current) return
       setSkills(rows)
       setSkillsError(undefined)
     }, (failure: unknown) => {
-      if (current) setSkillsError(messageOf(failure))
+      if (current && sequence === listRequest.current) setSkillsError(messageOf(failure))
     })
     return () => { current = false }
   }, [live?.state.kind, generation])
@@ -80,7 +90,7 @@ export function LuaSkillsPage({ view, t, openSettings }: { view: HostWatch<Runti
           ))}
         </div>
         <div hidden={tab !== 'installed'}>
-          <Installed skills={skills} error={skillsError} ready={ready} reload={reload} t={t} />
+          <Installed skills={skills} error={skillsError} ready={ready} reload={reload} replaceSkill={replaceSkill} t={t} />
         </div>
         <div hidden={tab !== 'hub'}>
           {hubVisited && live != null ? (
@@ -97,15 +107,20 @@ export function LuaSkillsPage({ view, t, openSettings }: { view: HostWatch<Runti
   )
 }
 
-function Installed({ skills, error, ready, reload, t }: {
+function Installed({ skills, error, ready, reload, replaceSkill, t }: {
   skills: readonly SkillRow[] | undefined
   error: string | undefined
   ready: boolean
   reload: () => void
+  replaceSkill: (row: SkillRow) => void
   t: Translate
 }) {
   const [busy, setBusy] = useState<string | undefined>(undefined)
   const [notes, setNotes] = useState<readonly { readonly ok: boolean; readonly text: string }[]>([])
+  // Update state follows the card being processed, including entries in a bulk update.
+  // 更新状态跟随正在处理的卡片，也覆盖批量更新中的每个条目。
+  const [updating, setUpdating] = useState<string>()
+  const [updateNotes, setUpdateNotes] = useState<Record<string, { ok: boolean; text: string }>>({})
   const run = (id: string, work: () => Promise<unknown>) => {
     setBusy(id)
     setNotes([])
@@ -115,19 +130,27 @@ function Installed({ skills, error, ready, reload, t }: {
     })
   }
   const update = async (skill: SkillRow): Promise<boolean> => {
+    const key = `${skill.root}:${skill.skillId}`
+    setUpdating(key)
     try {
-      const result = await callHost<ApplyResult>('POST', `skills/update?id=${encodeURIComponent(skill.skillId)}`)
-      setNotes(list => [...list, { ok: true, text: fill(t('installed.result'), { name: skill.name, message: result.message }) }])
+      const params = new URLSearchParams({ id: skill.skillId, lang: t('hubLang'), root: skill.root })
+      const response = await callHost<{ result: ApplyResult; skill: SkillRow }>('POST', `skills/update?${params}`)
+      replaceSkill(response.skill)
+      setUpdateNotes(current => ({ ...current, [key]: { ok: true,
+        text: t(response.result.status === 'up_to_date' ? 'installed.upToDate' : 'installed.updated') } }))
       return true
     } catch (failure) {
-      setNotes(list => [...list, { ok: false, text: fill(t('installed.result'), { name: skill.name, message: messageOf(failure) }) }])
+      setUpdateNotes(current => ({ ...current, [key]: { ok: false, text: messageOf(failure) } }))
       return false
+    } finally {
+      setUpdating(undefined)
     }
   }
   // One after another, stopping at the first failure, as VulcanCode does.
   const updateAll = () => {
     setBusy('*')
     setNotes([])
+    setUpdateNotes({})
     void (async () => {
       for (const skill of skills ?? []) {
         if (skill.source === undefined) continue
@@ -135,7 +158,6 @@ function Installed({ skills, error, ready, reload, t }: {
       }
     })().finally(() => {
       setBusy(undefined)
-      reload()
     })
   }
 
@@ -153,8 +175,12 @@ function Installed({ skills, error, ready, reload, t }: {
         {error === undefined ? null : <p className="vac-error vls-pad">{error}</p>}
         {skills.length === 0 ? <p className="vac-hint vls-pad">{t('installed.empty')}</p> : null}
         <ul className="vls-list">
-          {skills.map(skill => (
-            <li key={`${skill.root}:${skill.skillId}`} className="vls-row">
+          {skills.map(skill => {
+            const key = `${skill.root}:${skill.skillId}`
+            const note = updateNotes[key]
+            const pending = updating === key
+            return (
+            <li key={key} className="vls-row" aria-busy={pending}>
               <div className="vls-row-main">
                 <div className="vac-inline">
                   <strong>{skill.name}</strong>
@@ -166,22 +192,29 @@ function Installed({ skills, error, ready, reload, t }: {
                 <p className="vac-hint vac-mono">
                   {skill.skillId}
                   {skill.source === undefined ? '' : ` · ${skill.source.type}:${skill.source.locator}`}
-                  {skill.tools.length === 0 ? '' : ` · ${fill(t('installed.tools'), { count: skill.tools.length })}`}
                 </p>
-                {skill.tools.length === 0 ? null : <p className="vls-tools vac-mono">{skill.tools.join('  ')}</p>}
+                <SkillIntroduction skill={skill} locale={t('hubLang')} />
+                {pending ? <p className="vac-hint" role="status">{t('installed.updating')}</p> :
+                  note === undefined ? null : <p className={note.ok ? 'vac-hint' : 'vac-error'} role={note.ok ? 'status' : 'alert'}>{note.text}</p>}
               </div>
-              <span className="vac-inline">
+              <div className="vac-inline">
+                {skill.tools.length === 0 ? null : <SkillTools tools={skill.tools} t={t} />}
                 <button
                   type="button"
                   className="vac-btn sm"
                   disabled={!ready || busy !== undefined}
-                  onClick={() => { run(skill.skillId, () => callHost('POST', `skills/enabled?id=${encodeURIComponent(skill.skillId)}&enabled=${String(!skill.enabled)}`)) }}
+                  onClick={() => { run(skill.skillId, () => callHost('POST', `skills/enabled?${new URLSearchParams({
+                    id: skill.skillId, root: skill.root, enabled: String(!skill.enabled),
+                  })}`)) }}
                 >
                   {skill.enabled ? t('installed.disable') : t('installed.enable')}
                 </button>
                 {skill.source === undefined ? null : (
-                  <button type="button" className="vac-btn sm" disabled={!ready || busy !== undefined} onClick={() => { run(skill.skillId, () => update(skill)) }}>
-                    {t('installed.update')}
+                  <button type="button" className="vac-btn sm" disabled={!ready || busy !== undefined} onClick={() => {
+                    setBusy(key)
+                    void update(skill).finally(() => { setBusy(undefined) })
+                  }}>
+                    {t(pending ? 'installed.updating' : 'installed.update')}
                   </button>
                 )}
                 {skill.root !== 'USER' ? null : (
@@ -191,16 +224,16 @@ function Installed({ skills, error, ready, reload, t }: {
                     disabled={!ready || busy !== undefined}
                     onClick={() => {
                       if (window.confirm(fill(t('installed.uninstallConfirm'), { name: skill.name }))) {
-                        run(skill.skillId, () => callHost('POST', `skills/uninstall?id=${encodeURIComponent(skill.skillId)}`))
+                        run(skill.skillId, () => callHost('POST', `skills/uninstall?${new URLSearchParams({ id: skill.skillId, root: skill.root })}`))
                       }
                     }}
                   >
                     {t('installed.uninstall')}
                   </button>
                 )}
-              </span>
+              </div>
             </li>
-          ))}
+          )})}
         </ul>
         {notes.length === 0 ? null : (
           <div className="vls-pad">
@@ -210,6 +243,40 @@ function Installed({ skills, error, ready, reload, t }: {
       </div>
     </section>
   )
+}
+
+/** Display Hub metadata first and resolve descriptions for installs that predate the local cache.
+ *  优先显示 Hub 元数据，并补查本地缓存引入前已安装的 Hub 技能介绍。 */
+function SkillIntroduction({ skill, locale }: { skill: SkillRow; locale: string }) {
+  const [fetched, setFetched] = useState<string | null>(null)
+  useEffect(() => {
+    setFetched(null)
+    if (skill.source?.type !== 'official_hub' || skill.hubSummary !== undefined) return
+    let active = true
+    const params = new URLSearchParams({ id: skill.skillId, root: skill.root, lang: locale })
+    void callHost<string | null>('GET', `skills/description?${params}`).then(value => {
+      if (active) setFetched(value)
+    }, () => {})
+    return () => { active = false }
+  }, [skill.skillId, skill.root, skill.source?.type, skill.version, skill.hubSummary, locale])
+  const text = skill.hubSummary ?? fetched ?? skill.description
+  return text === undefined ? null : <p className="vls-summary">{text}</p>
+}
+
+/** Show registered tool names on pointer hover or keyboard focus.
+ *  在鼠标悬停或键盘聚焦时显示已注册工具名称。 */
+function SkillTools({ tools, t }: { tools: readonly string[]; t: Translate }) {
+  const tooltip = useId()
+  const [dismissed, setDismissed] = useState(false)
+  return <div className="vls-tool-trigger" onMouseEnter={() => { setDismissed(false) }}
+    onFocus={() => { setDismissed(false) }} onKeyDown={event => { if (event.key === 'Escape') setDismissed(true) }}>
+    <button type="button" className="vac-btn sm" aria-describedby={dismissed ? undefined : tooltip}>
+      {t('installed.toolButton')} · {tools.length}
+    </button>
+    {dismissed ? null : <div id={tooltip} role="tooltip" className="vls-tool-tip">
+      <ul>{tools.map(tool => <li key={tool}><code>{tool}</code></li>)}</ul>
+    </div>}
+  </div>
 }
 
 /** Store the submitted query, cursor history and the page being requested.
@@ -305,7 +372,9 @@ function Hub({ live, ready, installed, reload, view, t }: {
   const install = (skill: HubSkill) => {
     setInstalling(skill.skill_id)
     setError(undefined)
-    callHost<ApplyResult>('POST', `skills/install?${new URLSearchParams({ id: skill.skill_id, hub, lang })}`).then(
+    const summary = [skill.content?.intro, skill.content?.summary, skill.summary]
+      .find(text => typeof text === 'string' && text.trim() !== '')
+    callHost<ApplyResult>('POST', `skills/install?${new URLSearchParams({ id: skill.skill_id, hub, lang })}`, summary?.trim().slice(0, 16_384) ?? null).then(
       () => { reload() },
       (failure: unknown) => { setError(messageOf(failure)) },
     ).finally(() => { setInstalling(undefined) })
