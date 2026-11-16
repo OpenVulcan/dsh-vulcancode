@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
+import { regionalAsset, type RuntimeDownloadSource } from './runtime-downloads.js'
 
 // Use the official standalone Node x64 distribution as the Windows Worker host.
 // Windows Worker 使用 Node 官方 x64 独立发行版。
@@ -56,7 +57,7 @@ export async function prepareWindowsNode(bytes: Uint8Array): Promise<Buffer> {
 
 /** Return the Worker executable, using a verified UTF-8 Node copy under the plugin home on Windows.
  * 返回 Worker 可执行文件路径；Windows 使用插件目录下经过校验的 UTF-8 Node 副本。 */
-export async function resolveWorkerExecutable(home: string, signal: AbortSignal): Promise<string> {
+export async function resolveWorkerExecutable(home: string, signal: AbortSignal, source: RuntimeDownloadSource): Promise<string> {
   if (process.platform !== 'win32') return process.execPath
   if (process.arch !== 'x64') throw new Error(`LuaSkills has no Windows Worker for ${process.arch}.`)
   // The shared cache is independent of runtime slots so upgrade, restart and rollback use the same host.
@@ -67,7 +68,8 @@ export async function resolveWorkerExecutable(home: string, signal: AbortSignal)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
   }
-  const response = await fetch(WINDOWS_NODE.url, { signal: AbortSignal.any([signal, AbortSignal.timeout(120_000)]) })
+  const url = await regionalAsset(WINDOWS_NODE.url, source, signal)
+  const response = await fetch(url, { signal: AbortSignal.any([signal, AbortSignal.timeout(120_000)]) })
   if (!response.ok) throw new Error(`The Windows LuaSkills worker download failed (HTTP ${response.status}).`)
   const prepared = await prepareWindowsNode(new Uint8Array(await response.arrayBuffer()))
   if (sha256(prepared) !== WINDOWS_NODE.preparedSha256) throw new Error('The generated Windows LuaSkills worker failed SHA-256 verification.')

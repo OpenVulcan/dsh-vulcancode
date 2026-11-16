@@ -42,6 +42,27 @@ function fixture(context: TestContext) {
   return { runtime, controlled }
 }
 
+// Hub selection can be changed without an installed engine and remains independent of the mirror.
+// 无需安装引擎即可调整 Hub 站点，且站点独立于镜像。
+test('follows the account site unless the user chooses a Hub', async context => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'dsh-luaskills-hub-site-'))
+  let site: 'cn' | 'global' | undefined = 'cn'
+  const runtime = new LuaSkillsRuntime(directory, () => {}, async () => site)
+  context.after(async () => {
+    await runtime.close()
+    rmSync(directory, { recursive: true, force: true })
+  })
+  assert.equal(await runtime.hubUrl(), 'https://hub.luaskills.cn')
+  await runtime.setDownloadPreference('officialSkillHubBaseUrl', 'https://hub.luaskills.com')
+  await runtime.setDownloadPreference('githubBaseUrl', 'https://ghfast.top/https://github.com')
+  assert.equal(await runtime.hubUrl(), 'https://hub.luaskills.com')
+  await runtime.setDownloadPreference('officialSkillHubBaseUrl', null)
+  assert.equal(await runtime.hubUrl(), 'https://hub.luaskills.cn')
+  site = undefined
+  assert.equal(await runtime.hubUrl(), 'https://hub.luaskills.com')
+  assert.equal(runtime.settings.network.githubBaseUrl, 'https://ghfast.top/https://github.com')
+})
+
 test('close waits for a restart already stopping its worker and prevents another spawn', async context => {
   const { runtime, controlled } = fixture(context)
   const stopping = Promise.withResolvers<void>()
@@ -139,7 +160,8 @@ function upgradeFixture(context: TestContext) {
     writeFileSync(file, contents)
   }
   const originalMarker = JSON.stringify(marker)
-  const settings = JSON.stringify({ ...DEFAULT_SETTINGS, vmPool: { ...DEFAULT_SETTINGS.vmPool, idleTtlSecs: 75 } })
+  const settings = JSON.stringify({ ...DEFAULT_SETTINGS, network: { ...DEFAULT_SETTINGS.network, githubBaseUrl: 'https://github.com' },
+    vmPool: { ...DEFAULT_SETTINGS.vmPool, idleTtlSecs: 75 } })
   writeFileSync(markerFile, originalMarker)
   writeFileSync(path.join(home, 'settings.json'), settings)
   const runtime = new LuaSkillsRuntime(home, () => {})

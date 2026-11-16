@@ -22,7 +22,6 @@ test('a settings value is refused for any wrong field', () => {
     ['cache order', value => { value['toolCache']!['defaultTtlSecs'] = 100; value['toolCache']!['maxTtlSecs'] = 10 }],
     ['unknown encoding', value => { value['capabilities']!['defaultTextEncoding'] = 'utf-16' }],
     ['non-http url', value => { value['network']!['officialSkillHubBaseUrl'] = 'ftp://hub.example' }],
-    ['null hub url', value => { value['network']!['officialSkillHubBaseUrl'] = null }],
   ]
   for (const [name, change] of cases) {
     const value = copy()

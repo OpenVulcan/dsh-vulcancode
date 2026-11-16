@@ -14,6 +14,7 @@ import type {
   ApplyResult, EntryDescriptor, HelpDetail, InvocationResult, ManagedKind, ManagedView, SkillHelp, WorkerEvent, WorkerReply,
 } from './protocol.js'
 import { workerEnvironment } from './worker-host.js'
+import type { RuntimeDownloadSource } from './runtime-downloads.js'
 
 export type DownloadListener = (role: string, received: number, total: number | null) => void
 
@@ -101,7 +102,7 @@ export class LuaSkillsWorker {
     })
   }
 
-  installRuntime(params: { runtimeRoot: string; luaskillsVersion: string; luaRuntimeVersion: string }): Promise<void> {
+  installRuntime(params: { runtimeRoot: string; luaskillsVersion: string; luaRuntimeVersion: string; source: RuntimeDownloadSource }): Promise<void> {
     return this.request('installRuntime', params)
   }
 
@@ -113,8 +114,8 @@ export class LuaSkillsWorker {
 
   /** Ask the worker to provision only the requested missing interpreter.
    * 请求 Worker 仅补装指定且缺失的解释器。 */
-  installManaged(runtimeRoot: string, luaRuntimeVersion: string, kind: ManagedKind): Promise<void> {
-    return this.request('installManaged', { runtimeRoot, luaRuntimeVersion, kind })
+  installManaged(runtimeRoot: string, luaRuntimeVersion: string, kind: ManagedKind, source: RuntimeDownloadSource): Promise<void> {
+    return this.request('installManaged', { runtimeRoot, luaRuntimeVersion, kind, source })
   }
 
   start(params: { runtimeRoot: string; poolConfig: object; hostOptions: object }): Promise<void> {

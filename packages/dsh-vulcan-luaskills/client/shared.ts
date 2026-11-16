@@ -55,7 +55,7 @@ export interface LuaSkillsSettings {
     readonly allowDownloads: boolean
     readonly githubBaseUrl: string | null
     readonly githubApiBaseUrl: string | null
-    readonly officialSkillHubBaseUrl: string
+    readonly officialSkillHubBaseUrl: string | null
   }
 }
 
@@ -83,6 +83,10 @@ export interface RuntimeView {
   readonly settingsSource: 'defaults' | 'saved' | 'invalid'
   readonly settingsError?: string
   readonly hubSites: readonly { readonly site: 'global' | 'cn'; readonly url: string }[]
+  // The effective Hub URL and public mirror catalog returned by the host.
+  // 主机返回的生效 Hub 地址与公开镜像目录。
+  readonly hubUrl: string
+  readonly mirrors: readonly { readonly label: string; readonly base: string; readonly region: 'global' | 'cn' }[]
   readonly managed?: { readonly root: string; readonly node: ManagedStatus; readonly python: ManagedStatus }
   readonly managedInstalling?: 'node' | 'python'
   readonly managedError?: string

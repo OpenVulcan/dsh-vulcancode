@@ -6,7 +6,7 @@
 import { useEffect, useState } from 'react'
 
 import { fill, type Key, type Translate } from './i18n'
-import { ManagedRuntimeSection, RuntimeSection, useRuntime } from './runtime'
+import { DownloadMirrorSection, ManagedRuntimeSection, RuntimeSection, useRuntime } from './runtime'
 import {
   callHost, isInstalled, messageOf, TEXT_ENCODINGS, type HostWatch, type LuaSkillsSettings, type RuntimeView,
 } from './shared'
@@ -23,6 +23,7 @@ export function SettingsPage({ view, t }: { view: HostWatch<RuntimeView | null>;
         : live === null ? <div className="vac-alert bad">{t('unavailable')}</div>
           : (
             <>
+              <DownloadMirrorSection view={view} live={live} t={t} />
               <RuntimeSection view={view} live={live} t={t} />
               <ManagedRuntimeSection view={view} live={live} t={t} />
               <SettingsSection view={view} live={live} t={t} />
@@ -201,15 +202,15 @@ function SettingsSection({ view, live, t }: { view: HostWatch<RuntimeView | null
         <fieldset className="vls-group" disabled={locked}>
           <legend>{t('settings.network')}</legend>
           {toggle('network', 'allowDownloads', 'settings.allowDownloads')}
-          {urlField('githubBaseUrl', 'settings.githubBaseUrl', 'https://github.com')}
           {urlField('githubApiBaseUrl', 'settings.githubApiBaseUrl', 'https://api.github.com')}
           <label className="vls-field wide">
             <span>{t('settings.skillHubBaseUrl')}</span>
             <input
               className="vls-input vac-mono"
               disabled={locked}
-              value={draft.settings.network.officialSkillHubBaseUrl}
-              onChange={(event) => { setField('network', 'officialSkillHubBaseUrl', event.target.value.trim()) }}
+              value={draft.settings.network.officialSkillHubBaseUrl ?? ''}
+              placeholder={t('hub.site.auto')}
+              onChange={(event) => { setField('network', 'officialSkillHubBaseUrl', event.target.value.trim() || null) }}
             />
             <span className="vac-inline">
               {live.hubSites.map(site => (

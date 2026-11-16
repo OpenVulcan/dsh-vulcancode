@@ -1,0 +1,17 @@
+{
+  "name": "@openvulcan/dsh-runtime-download",
+  "version": "0.4.5",
+  "type": "module",
+  "license": "MIT",
+  "exports": { ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" } },
+  "files": ["lib", "!lib/**/*.test.*"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsc -p tsconfig.json && node --test lib/index.test.js"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}

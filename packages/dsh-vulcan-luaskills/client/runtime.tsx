@@ -18,6 +18,87 @@ export function useRuntime(view: HostWatch<RuntimeView | null>): RuntimeView | n
   return live
 }
 
+/** Offer automatic speed testing, manual sources and one custom GitHub base before installation.
+ *  安装前提供自动测速、手动选择和一个自定义 GitHub 基址。 */
+export function DownloadMirrorSection({ view, live, t }: { view: HostWatch<RuntimeView | null>; live: RuntimeView; t: Translate }) {
+  const selected = live.settings.network.githubBaseUrl
+  const [custom, setCustom] = useState('')
+  const [testing, setTesting] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string>()
+  const [scores, setScores] = useState<readonly { base: string; bytesPerSecond: number | null }[]>([])
+  const mirrors = selected === null || live.mirrors.some(mirror => mirror.base === selected) ? live.mirrors
+    : [...live.mirrors, { base: selected, label: t('mirror.custom') }]
+  const fastest = scores.filter(score => score.bytesPerSecond !== null)
+    .sort((left, right) => (right.bytesPerSecond ?? 0) - (left.bytesPerSecond ?? 0))[0]
+  const busy = saving || testing || live.state.kind === 'installing' || live.state.kind === 'starting'
+
+  /** Publish the preference and refresh the host's current selection.
+   *  保存偏好并刷新主机当前选择。 */
+  const select = async (mirror: string | null) => {
+    setSaving(true)
+    setError(undefined)
+    try {
+      await callHost('POST', 'downloads/mirror', mirror)
+      setCustom('')
+      view.refresh()
+    } catch (failure) {
+      setError(messageOf(failure))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  /** Sample a pinned GitHub release asset from every listed mirror.
+   *  从每个列出的镜像采样一个固定版本的 GitHub 发行资产。 */
+  const test = async () => {
+    setTesting(true)
+    setError(undefined)
+    try { setScores(await callHost<typeof scores>('GET', 'downloads/probe')) }
+    catch (failure) { setError(messageOf(failure)) }
+    finally { setTesting(false) }
+  }
+
+  return <section className="vac-section">
+    <div className="vac-section-head">
+      <div><h3 className="vac-section-title">{t('mirror.title')}</h3><p className="vac-section-lead">{t('mirror.lead')}</p></div>
+      <span className="vac-inline">
+        <button type="button" className="vac-btn sm" disabled={busy || !live.settings.network.allowDownloads}
+          onClick={() => { void test() }}>{t(testing ? 'mirror.testing' : 'mirror.test')}</button>
+        <button type="button" className="vac-btn sm" disabled={busy || fastest === undefined || selected === fastest.base}
+          onClick={() => { if (fastest !== undefined) void select(fastest.base) }}>{t('mirror.useFastest')}</button>
+      </span>
+    </div>
+    <div className="vac-section-body">
+      <div className="vac-between">
+        <span>{t('mirror.auto')}</span>
+        <button type="button" className={selected === null ? 'vls-seg on' : 'vls-seg'} disabled={busy || selected === null}
+          onClick={() => { void select(null) }}>{t(selected === null ? 'mirror.active' : 'mirror.use')}</button>
+      </div>
+      <ul className="vls-list">
+        {mirrors.map(mirror => {
+          const speed = scores.find(score => score.base === mirror.base)?.bytesPerSecond
+          return <li key={mirror.base} className="vls-row vls-mirror-row">
+            <div className="vls-row-main">
+              <strong>{mirror.label}</strong>
+              <span className="vac-hint vac-mono">{mirror.base}</span>
+            </div>
+            <span className="vac-hint vac-mono">{speed === undefined ? '—' : speed === null ? t('mirror.unreachable') : `${Math.round(speed / 1024)} KiB/s`}</span>
+            <button type="button" className={selected === mirror.base ? 'vls-seg on' : 'vls-seg'} disabled={busy || selected === mirror.base}
+              onClick={() => { void select(mirror.base) }}>{t(selected === mirror.base ? 'mirror.active' : 'mirror.use')}</button>
+          </li>
+        })}
+      </ul>
+      <form className="vls-search-form" onSubmit={event => { event.preventDefault(); if (custom.trim() !== '') void select(custom.trim()) }}>
+        <input className="vls-input vls-search" aria-label={t('mirror.custom')} placeholder={t('mirror.custom')} value={custom}
+          disabled={busy} onChange={event => { setCustom(event.target.value) }} />
+        <button type="submit" className="vac-btn" disabled={busy || custom.trim() === ''}>{t('mirror.use')}</button>
+      </form>
+      {error === undefined ? null : <p className="vac-error" role="alert">{error}</p>}
+    </div>
+  </section>
+}
+
 /** Show the live interpreter environment and let the user install either missing family.
  * 显示当前解释器环境，并允许用户分别补装缺失项。 */
 export function ManagedRuntimeSection({ view, live, t }: { view: HostWatch<RuntimeView | null>; live: RuntimeView; t: Translate }) {
@@ -74,7 +155,9 @@ export function ManagedRuntimeSection({ view, live, t }: { view: HostWatch<Runti
                       </span>
                     </div>
                     {runtime.executable === null ? null : <p className="vac-hint vac-mono">{runtime.executable}</p>}
-                    {runtime.error === undefined || installing ? null : <p className="vac-error vls-env-path" role="alert">{runtime.error}</p>}
+                    {runtime.error === undefined || installing ? null : <p className="vac-error vls-env-path" role="alert">
+                      {t('mirror.retry')} <small>{runtime.error}</small>
+                    </p>}
                   </div>
                   {ready ? null : (
                     <button type="button" className="vac-btn sm"
@@ -216,6 +299,7 @@ export function RuntimeSection({ view, live, t }: { view: HostWatch<RuntimeView 
       ) : (
         <div className="vls-banner bad">
           <p className="vac-error">{fill(t('runtime.failed'), { error: state.error })}</p>
+          <p className="vac-hint">{t('mirror.retry')}</p>
           <button type="button" className="vac-btn primary" disabled={busy} onClick={install}>{t('runtime.retry')}</button>
         </div>
       )
@@ -232,7 +316,9 @@ export function RuntimeSection({ view, live, t }: { view: HostWatch<RuntimeView 
       </div>
       <div className="vac-section-body">
         {body}
-        {live.upgradeError === undefined ? null : <p className="vac-error" role="alert">{fill(t('runtime.upgradeFailed'), { error: live.upgradeError })}</p>}
+        {live.upgradeError === undefined ? null : <p className="vac-error" role="alert">
+          {fill(t('runtime.upgradeFailed'), { error: live.upgradeError })} {t('mirror.retry')}
+        </p>}
         {error === undefined ? null : <p className="vac-error" role="alert">{error}</p>}
       </div>
     </section>

@@ -41,11 +41,14 @@ export interface LuaSkillsSettings {
   }
   readonly network: {
     readonly allowDownloads: boolean
-    /** Null uses `https://github.com`. */
+    /** Null selects the fastest GitHub mirror automatically.
+     *  空值表示自动选择测速最快的 GitHub 镜像。 */
     readonly githubBaseUrl: string | null
     /** Null uses `https://api.github.com`. */
     readonly githubApiBaseUrl: string | null
-    readonly officialSkillHubBaseUrl: string
+    /** Null follows the OpenVulcan account's site.
+     *  空值表示跟随 OpenVulcan 账号所在站点。 */
+    readonly officialSkillHubBaseUrl: string | null
   }
 }
 
@@ -64,7 +67,7 @@ export const DEFAULT_SETTINGS: LuaSkillsSettings = {
     invokeDefaultTimeoutMs: 60_000,
   },
   capabilities: { defaultTextEncoding: null, enableSkillManagementBridge: false, enableManagedIoCompat: true },
-  network: { allowDownloads: true, githubBaseUrl: null, githubApiBaseUrl: null, officialSkillHubBaseUrl: HUB_SITES[0].url },
+  network: { allowDownloads: true, githubBaseUrl: null, githubApiBaseUrl: null, officialSkillHubBaseUrl: null },
 }
 
 export class SettingsError extends Error {
@@ -86,7 +89,7 @@ const SHAPE: Shape = {
     invokeDefaultTimeoutMs: 'count',
   },
   capabilities: { defaultTextEncoding: 'encoding', enableSkillManagementBridge: 'boolean', enableManagedIoCompat: 'boolean' },
-  network: { allowDownloads: 'boolean', githubBaseUrl: 'optional-url', githubApiBaseUrl: 'optional-url', officialSkillHubBaseUrl: 'url' },
+  network: { allowDownloads: 'boolean', githubBaseUrl: 'optional-url', githubApiBaseUrl: 'optional-url', officialSkillHubBaseUrl: 'optional-url' },
 }
 
 /**
@@ -203,7 +206,7 @@ export function engineOptions(settings: LuaSkillsSettings): { poolConfig: Record
       },
       // Read by the Rust core although the SDK's TypeScript type does not list them.
       ...settings.capabilities.defaultTextEncoding === null ? {} : { default_text_encoding: settings.capabilities.defaultTextEncoding },
-      official_skill_hub_base_url: settings.network.officialSkillHubBaseUrl,
+      official_skill_hub_base_url: settings.network.officialSkillHubBaseUrl ?? HUB_SITES[0].url,
       allow_network_download: settings.network.allowDownloads,
       github_base_url: settings.network.githubBaseUrl,
       github_api_base_url: settings.network.githubApiBaseUrl,

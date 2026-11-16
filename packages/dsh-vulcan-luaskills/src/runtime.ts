@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 
 import { withFileLock, writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
+import { GITHUB, mirrorBase, selectGitHubMirror } from '@openvulcan/dsh-runtime-download'
 import {
   DEFAULT_SKILL, HUB_SITES, LUA_RUNTIME_VERSION, LUASKILLS_VERSION, RUNTIME_SIZE_MB, SDK_PACKAGE, SDK_PACKAGES,
 } from './constants.js'
@@ -19,6 +20,7 @@ import {
   engineOptions, loadSettings, parseSettings, saveSettings, type LoadedSettings, type LuaSkillsSettings,
 } from './settings.js'
 import { resolveWorkerExecutable } from './worker-host.js'
+import { LUA_MIRROR_SAMPLE, regionalAsset, type RuntimeDownloadSource } from './runtime-downloads.js'
 
 export interface Versions {
   readonly sdk: string
@@ -109,12 +111,17 @@ export class LuaSkillsRuntime {
   private requests: Promise<void> = Promise.resolve()
   private closing: Promise<void> | undefined
   private closed = false
+  // Retain one automatic result for a short period and track the active Worker's sources.
+  // 短时间内复用自动测速结果，并记录当前 Worker 的下载源。
+  private measured: { base: string; until: number } | undefined
+  private engineSources: { github: string; hub: string } | undefined
 
   /**
    * @param home - this plugin's folder in the dsh home.
    * @param changed - called after every state change.
    */
-  constructor(readonly home: string, private readonly changed: () => void) {
+  constructor(readonly home: string, private readonly changed: () => void,
+    private readonly accountSite: () => Promise<'cn' | 'global' | undefined> = async () => undefined) {
     this.marker = path.join(home, 'installed.json')
     this.settingsFile = path.join(home, 'settings.json')
     this.versionsDirectory = path.join(home, 'versions')
@@ -151,6 +158,61 @@ export class LuaSkillsRuntime {
 
   get settings(): LuaSkillsSettings {
     return this.loaded.settings
+  }
+
+  /** Resolve the saved Hub override or the current account's official Hub.
+   *  解析已保存的 Hub 覆盖项或当前账号对应的官方 Hub。 */
+  async hubUrl(): Promise<string> {
+    return this.settings.network.officialSkillHubBaseUrl ??
+      ((await this.accountSite()) === 'cn' ? HUB_SITES[1].url : HUB_SITES[0].url)
+  }
+
+  /** Save only the requested network field under the lifecycle lock.
+   *  在生命周期锁下仅保存指定的网络字段。 */
+  async setDownloadPreference(field: 'githubBaseUrl' | 'officialSkillHubBaseUrl', value: string | null): Promise<void> {
+    await this.runExclusive('change', async () => {
+      const loaded = loadSettings(this.settingsFile)
+      const settings = parseSettings({ ...loaded.settings, network: { ...loaded.settings.network, [field]: value } })
+      saveSettings(this.settingsFile, settings)
+      this.loaded = { kind: 'saved', settings }
+      if (field === 'githubBaseUrl') this.measured = undefined
+      this.changed()
+    })
+  }
+
+  /** Resolve the mirror only when a download is needed; startup reuses ready runtime files.
+   *  仅在需要下载时解析镜像；启动时复用已就绪的运行时文件。 */
+  private async downloadSource(signal: AbortSignal): Promise<RuntimeDownloadSource> {
+    const configured = this.settings.network.githubBaseUrl
+    if (configured !== null) return { github: mirrorBase(configured), automatic: false }
+    if (this.measured === undefined || this.measured.until <= Date.now()) {
+      this.measured = { base: await selectGitHubMirror(LUA_MIRROR_SAMPLE, null, signal), until: Date.now() + 300_000 }
+    }
+    return { github: this.measured.base, automatic: true }
+  }
+
+  /** Align the worker with the effective Hub and mirror before a skill download.
+   *  技能下载前将 Worker 与生效的 Hub 和镜像同步。 */
+  async prepareSkillDownload(): Promise<string> {
+    const hub = await this.hubUrl()
+    await this.runExclusive('change', async signal => {
+      this.engine()
+      const { github } = await this.downloadSource(signal)
+      if (this.engineSources?.github !== github || this.engineSources?.hub !== hub) await this.start(signal)
+      this.engine()
+      if (this.engineSources?.hub !== hub) throw new RuntimeError('The LuaSkills Hub changed. Refresh and retry.')
+    })
+    return hub
+  }
+
+  /** Build the engine options with resolved, rather than automatic, network addresses.
+   *  使用已解析的网络地址构建引擎设置。 */
+  private async workerOptions(): Promise<ReturnType<typeof engineOptions>> {
+    const configured = this.settings.network.githubBaseUrl
+    const github = configured === null ? this.measured?.base ?? GITHUB : mirrorBase(configured)
+    const hub = await this.hubUrl()
+    this.engineSources = { github, hub }
+    return engineOptions({ ...this.settings, network: { ...this.settings.network, githubBaseUrl: github, officialSkillHubBaseUrl: hub } })
   }
 
   /** The running engine. @throws RuntimeError when it is not ready. */
@@ -378,7 +440,9 @@ export class LuaSkillsRuntime {
   private async createWorker(directory: string, signal: AbortSignal): Promise<LuaSkillsWorker> {
     // Provision the host under the same lifecycle lock as the Lua runtime.
     // 在 Lua 运行库的同一生命周期锁下准备 Worker 宿主。
-    const executable = await resolveWorkerExecutable(path.join(this.home, 'worker-host'), signal)
+    const configured = this.settings.network.githubBaseUrl
+    const source = { github: configured === null ? GITHUB : mirrorBase(configured), automatic: configured === null }
+    const executable = await resolveWorkerExecutable(path.join(this.home, 'worker-host'), signal, source)
     signal.throwIfAborted()
     const worker = new LuaSkillsWorker(this.sdkEntry(directory), (error) => {
       if (this.worker !== worker) return
@@ -417,7 +481,7 @@ export class LuaSkillsRuntime {
         this.managed = undefined
         this.managedError = undefined
       }
-      await abortable(worker.start({ runtimeRoot: this.runtimeRoot, ...engineOptions(this.loaded.settings) }), signal)
+      await abortable(worker.start({ runtimeRoot: this.runtimeRoot, ...await this.workerOptions() }), signal)
       signal.throwIfAborted()
       this.set({ kind: 'ready' })
     } catch (error) {
@@ -454,7 +518,10 @@ export class LuaSkillsRuntime {
         this.managedInstalling = kind
         this.changed()
         try {
-          await abortable(worker.installManaged(runtimeRoot, luaRuntimeVersion, kind), signal)
+          // Node and Python select mirrors only when the corresponding interpreter is missing.
+          // 仅在对应解释器缺失时为 Node 和 Python 选择镜像。
+          const source = await this.downloadSource(signal)
+          await abortable(worker.installManaged(runtimeRoot, luaRuntimeVersion, kind, source), signal)
         } catch (error) {
           signal.throwIfAborted()
           errors[kind] = messageOf(error)
@@ -505,7 +572,8 @@ export class LuaSkillsRuntime {
         throttled(() => { progress(role === 'lua_runtime' ? 'lua' : 'core', received, total) }, received === total || received === 0)
       }
       const runtimeRoot = path.join(directory, 'runtime')
-      await abortable(worker.installRuntime({ runtimeRoot, luaskillsVersion: LUASKILLS_VERSION, luaRuntimeVersion: LUA_RUNTIME_VERSION }), signal)
+      const source = await this.downloadSource(signal)
+      await abortable(worker.installRuntime({ runtimeRoot, luaskillsVersion: LUASKILLS_VERSION, luaRuntimeVersion: LUA_RUNTIME_VERSION, source }), signal)
       worker.onDownload = undefined
 
       progress('engine')
@@ -516,7 +584,7 @@ export class LuaSkillsRuntime {
       }
       signal.throwIfAborted()
       await this.syncManaged(worker, runtimeRoot, LUA_RUNTIME_VERSION, signal, 'all')
-      await abortable(worker.start({ runtimeRoot, ...engineOptions(this.loaded.settings) }), signal)
+      await abortable(worker.start({ runtimeRoot, ...await this.workerOptions() }), signal)
 
       progress('skill')
       if (!await installedDefaultSkill(runtimeRoot)) {
@@ -570,7 +638,10 @@ export class LuaSkillsRuntime {
   /** Download the pinned Node packages into the candidate, reporting throttled progress.
    *  将固定版本的 Node 包下载到候选目录，并按节流规则报告进度。 */
   private async installSdk(directory: string, signal: AbortSignal, progress: (received: number, total: number | null) => void): Promise<void> {
-    await installPackages(SDK_PACKAGES, path.join(directory, 'sdk', 'node_modules'), path.join(directory, 'download'), signal,
+    const configured = this.settings.network.githubBaseUrl
+    const source = { github: configured === null ? GITHUB : mirrorBase(configured), automatic: configured === null }
+    const packages = await Promise.all(SDK_PACKAGES.map(async pkg => ({ ...pkg, tarball: await regionalAsset(pkg.tarball, source, signal) })))
+    await installPackages(packages, path.join(directory, 'sdk', 'node_modules'), path.join(directory, 'download'), signal,
       (_index, received, total) => { throttled(() => progress(received, total), received === total) })
   }
 }

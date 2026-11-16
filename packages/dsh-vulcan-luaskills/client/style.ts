@@ -121,6 +121,7 @@ body[data-ds-dark-theme] .vac {
 .vls-row { display: flex; align-items: center; justify-content: space-between; gap: calc(var(--vk-u) * 3); padding: calc(var(--vk-u) * 3) calc(var(--vk-u) * 4); border-top: 1px solid var(--vk-line-soft); }
 .vls-row-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
 .vls-row-main .vac-hint { overflow-wrap: anywhere; }
+.vls-mirror-row { padding-inline: 0; }
 .vls-tools { margin: 0; color: var(--vk-ink-3); font-size: 11px; overflow-wrap: anywhere; }
 .vls-env-path { overflow-wrap: anywhere; }
 

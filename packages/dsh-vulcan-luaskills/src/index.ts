@@ -17,6 +17,8 @@ import type {} from '@deepseek-ai/dsh-sandbox-policy'
 import type { SkillCandidate, SkillProvider, SkillProviderControl } from '@deepseek-ai/dsh-skill'
 import type { PreToolDecision, ToolExecution } from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-working-directory'
+import type {} from '@openvulcan/dsh-vulcan-account'
+import { GITHUB_MIRRORS, githubUrl, mirrorBase, probeSources } from '@openvulcan/dsh-runtime-download'
 
 import { READ_ONLY_ENTRIES } from './constants.js'
 import { HubError, hubSkill, searchHub } from './hub.js'
@@ -25,6 +27,7 @@ import { LuaSkillsRuntime, RuntimeError } from './runtime.js'
 import { SettingsError } from './settings.js'
 import { listInstalled, type InstalledSkill } from './skills.js'
 import { helpTool, skillTool, toolName } from './tools.js'
+import { LUA_MIRROR_SAMPLE } from './runtime-downloads.js'
 
 export type { RuntimeState, RuntimeView } from './runtime.js'
 export type { LuaSkillsSettings } from './settings.js'
@@ -54,7 +57,17 @@ export interface SkillRow extends InstalledSkill {
 
 export function apply(ctx: Context): void {
   const dshVersion = getDshRuntimeVersion()
-  const runtime = new LuaSkillsRuntime(path.join(resolveDshHome(), 'vulcan-luaskills'), () => { onChange() })
+  const runtime = new LuaSkillsRuntime(path.join(resolveDshHome(), 'vulcan-luaskills'), () => { onChange() }, async () => {
+    const account = ctx.get('openvulcanAccount')
+    if (account === undefined) return undefined
+    try {
+      const status = await account.status()
+      return status.signedIn ? status.site : undefined
+    } catch (error) {
+      ctx.logger.debug(`cannot resolve LuaSkills Hub from OpenVulcan sign-in: ${messageOf(error)}`)
+      return undefined
+    }
+  })
 
   let disposers: (() => void)[] = []
   /** dsh tool name → LuaSkills canonical name, for entries that may change files. */
@@ -218,9 +231,42 @@ export function apply(ctx: Context): void {
     }
   }
 
-  const hubBase = () => runtime.settings.network.officialSkillHubBaseUrl
+  /** Validate a focused download preference without overwriting unrelated settings.
+   *  校验单项下载偏好，无需覆盖其他设置。 */
+  const preference = async (request: Request): Promise<string | null> => {
+    const value = await readJson(request)
+    if (value !== null && typeof value !== 'string') throw new RuntimeError('A download preference must be a URL or null.', 'invalid_request')
+    return value
+  }
+  /** Reject a cursor or skill selection issued for the previous Hub.
+   *  拒绝旧 Hub 的分页游标或技能选择。 */
+  const requestedHub = async (url: URL): Promise<string> => {
+    const hub = await runtime.hubUrl()
+    if (url.searchParams.get('hub') !== hub) throw new RuntimeError('The LuaSkills Hub changed. Refresh and retry.', 'invalid_request')
+    return hub
+  }
   const routes: readonly (readonly ['GET' | 'POST', string, Handler])[] = [
-    ['GET', 'state', async () => runtime.view()],
+    ['GET', 'state', async () => ({ ...runtime.view(), hubUrl: await runtime.hubUrl(), mirrors: GITHUB_MIRRORS })],
+    ['POST', 'downloads/mirror', async request => {
+      const value = await preference(request)
+      let normalized: string | null
+      try { normalized = value === null ? null : mirrorBase(value) }
+      catch { throw new RuntimeError('Enter a valid HTTPS GitHub mirror address.', 'invalid_request') }
+      await runtime.setDownloadPreference('githubBaseUrl', normalized)
+    }],
+    ['GET', 'downloads/probe', async request => {
+      if (!runtime.settings.network.allowDownloads) throw new RuntimeError('Enable LuaSkills network downloads before testing mirrors.', 'invalid_request')
+      const bases: string[] = GITHUB_MIRRORS.map(mirror => mirror.base)
+      const saved = runtime.settings.network.githubBaseUrl
+      if (saved !== null && !bases.includes(saved)) bases.push(mirrorBase(saved))
+      return (await probeSources(bases.map(base => githubUrl(LUA_MIRROR_SAMPLE, base)), request.signal))
+        .map((result, index) => ({ base: bases[index], bytesPerSecond: result.bytesPerSecond }))
+    }],
+    ['POST', 'hub/site', async request => {
+      const value = await preference(request)
+      if (value !== null && !runtime.view().hubSites.some(site => site.url === value)) throw new RuntimeError('Unknown LuaSkills Hub.', 'invalid_request')
+      await runtime.setDownloadPreference('officialSkillHubBaseUrl', value)
+    }],
     ['POST', 'install', async () => { runtime.install() }],
     ['POST', 'install/cancel', async () => { runtime.cancel() }],
     ['POST', 'remove', () => runtime.remove()],
@@ -244,6 +290,7 @@ export function apply(ctx: Context): void {
       const skill = findSkill(url)
       if (skill.source === undefined) throw new RuntimeError(`${skill.skillId} was not installed from a source it can be updated from`, 'invalid_request')
       const source = skill.source
+      await runtime.prepareSkillDownload()
       return await mutate(() => runtime.useEngine(engine => engine.update(skill.root, { skill_id: skill.skillId, source: source.locator, source_type: source.type })))
     }],
     ['POST', 'skills/uninstall', async (_request, url) => {
@@ -254,10 +301,12 @@ export function apply(ctx: Context): void {
     ['POST', 'skills/install', async (_request, url) => {
       const id = url.searchParams.get('id') ?? ''
       if (!HUB_ID.test(id)) throw new RuntimeError('id must be a LuaSkills Hub skill id', 'invalid_request')
+      const hub = await runtime.prepareSkillDownload()
+      if (url.searchParams.get('hub') !== hub) throw new RuntimeError('The LuaSkills Hub changed. Refresh and retry.', 'invalid_request')
       return await mutate(() => runtime.useEngine(engine => engine.install('USER', { skill_id: null, source: id, source_type: 'official_hub' })))
     }],
-    ['GET', 'hub/search', async (_request, url) => searchHub(hubBase(), url.searchParams.get('q') ?? '', url.searchParams.get('cursor'), url.searchParams.get('lang'))],
-    ['GET', 'hub/skill', async (_request, url) => hubSkill(hubBase(), url.searchParams.get('id') ?? '', url.searchParams.get('lang'))],
+    ['GET', 'hub/search', async (_request, url) => searchHub(await requestedHub(url), url.searchParams.get('q') ?? '', url.searchParams.get('cursor'), url.searchParams.get('lang'))],
+    ['GET', 'hub/skill', async (_request, url) => hubSkill(await requestedHub(url), url.searchParams.get('id') ?? '', url.searchParams.get('lang'))],
   ]
 
   ctx.inject(['connection'], (child) => {

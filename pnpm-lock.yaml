@@ -75,6 +75,15 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
+  packages/dsh-runtime-download:
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.19.2
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+
   packages/dsh-vulcan-account:
     dependencies:
       '@openvulcan/openvulcan-account':
@@ -165,6 +174,9 @@ importers:
       '@deepseek-ai/dsh-atomic-write':
         specifier: 0.2.2-rc.1
         version: 0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)
+      '@openvulcan/dsh-runtime-download':
+        specifier: workspace:*
+        version: link:../dsh-runtime-download
       resedit:
         specifier: 3.1.0
         version: 3.1.0
@@ -196,6 +208,9 @@ importers:
       '@deepseek-ai/dsh-working-directory':
         specifier: 0.2.2-rc.1
         version: 0.2.2-rc.1(2e93c6a6b6944e263e4a70a777c66b49)
+      '@openvulcan/dsh-vulcan-account':
+        specifier: workspace:*
+        version: link:../dsh-vulcan-account
       '@types/node':
         specifier: ^24.0.0
         version: 24.19.2

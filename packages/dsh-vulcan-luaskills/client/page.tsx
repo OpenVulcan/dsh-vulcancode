@@ -6,7 +6,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 
 import { fill, type Key, type Translate } from './i18n'
-import { ManagedRuntimeSection, useRuntime } from './runtime'
+import { DownloadMirrorSection, ManagedRuntimeSection, useRuntime } from './runtime'
 import {
   callHost, isInstalled, messageOf, type ApplyResult, type HostWatch, type HubDetail, type HubPage, type HubSkill,
   type RuntimeView, type SkillRow,
@@ -25,6 +25,14 @@ export function LuaSkillsPage({ view, t, openSettings }: { view: HostWatch<Runti
   // 首次打开 Hub 时加载，切换标签后保留当前页。
   const [hubVisited, setHubVisited] = useState(false)
   const ready = live?.state.kind === 'ready'
+  // Recheck sign-in and sign-out while the automatic Hub view is open.
+  // 自动 Hub 页面打开时重新检查登录和退出状态。
+  const followsAccount = live?.settings.network.officialSkillHubBaseUrl === null
+  useEffect(() => {
+    if (tab !== 'hub' || !followsAccount) return
+    const timer = setInterval(() => { view.refresh() }, 3000)
+    return () => { clearInterval(timer) }
+  }, [tab, followsAccount, view])
   // Installed skills, read again after every change; shared with the Hub tab's installed marks.
   const [skills, setSkills] = useState<readonly SkillRow[] | undefined>(undefined)
   const [skillsError, setSkillsError] = useState<string | undefined>(undefined)
@@ -76,11 +84,14 @@ export function LuaSkillsPage({ view, t, openSettings }: { view: HostWatch<Runti
         </div>
         <div hidden={tab !== 'hub'}>
           {hubVisited && live != null ? (
-            <Hub key={JSON.stringify([live.settings.network.officialSkillHubBaseUrl, t('hubLang')])}
+            <Hub key={JSON.stringify([live.hubUrl, t('hubLang')])}
               live={live} ready={ready} installed={skills ?? []} reload={reload} view={view} t={t} />
           ) : null}
         </div>
-        {tab !== 'environment' || live == null ? null : <ManagedRuntimeSection view={view} live={live} t={t} />}
+        {tab !== 'environment' || live == null ? null : <>
+          <DownloadMirrorSection view={view} live={live} t={t} />
+          <ManagedRuntimeSection view={view} live={live} t={t} />
+        </>}
       </div>
     </div>
   )
@@ -248,14 +259,15 @@ function Hub({ live, ready, installed, reload, view, t }: {
   const [detail, setDetail] = useState<HubDetail | undefined>(undefined)
   const [switching, setSwitching] = useState(false)
   const lang = t('hubLang')
-  const hub = live.settings.network.officialSkillHubBaseUrl
+  const hub = live.hubUrl
+  const configured = live.settings.network.officialSkillHubBaseUrl
   const site = live.hubSites.find(item => item.url === hub)?.site
 
   useEffect(() => {
     // Ignore responses from a superseded request or a Hub that has switched sites.
     // 忽略已被替换的请求，以及站点切换前尚未返回的请求。
     let current = true
-    const params = new URLSearchParams({ q: request.query, lang })
+    const params = new URLSearchParams({ q: request.query, lang, hub })
     const cursor = request.cursors[request.index]
     if (typeof cursor === 'string') params.set('cursor', cursor)
     void callHost<HubPage>('GET', `hub/search?${params.toString()}`).then((page) => {
@@ -264,7 +276,7 @@ function Hub({ live, ready, installed, reload, view, t }: {
       if (current) setResponse({ request, error: messageOf(failure) })
     })
     return () => { current = false }
-  }, [lang, request])
+  }, [hub, lang, request])
 
   /** Start a new search at the first page using the supplied text.
    * 使用传入的关键词发起新搜索，从第一页开始。 */
@@ -293,7 +305,7 @@ function Hub({ live, ready, installed, reload, view, t }: {
   const install = (skill: HubSkill) => {
     setInstalling(skill.skill_id)
     setError(undefined)
-    callHost<ApplyResult>('POST', `skills/install?id=${encodeURIComponent(skill.skill_id)}`).then(
+    callHost<ApplyResult>('POST', `skills/install?${new URLSearchParams({ id: skill.skill_id, hub, lang })}`).then(
       () => { reload() },
       (failure: unknown) => { setError(messageOf(failure)) },
     ).finally(() => { setInstalling(undefined) })
@@ -302,15 +314,15 @@ function Hub({ live, ready, installed, reload, view, t }: {
    * 按当前 Hub 语言打开所选技能的详情。 */
   const open = (skill: HubSkill) => {
     setError(undefined)
-    callHost<HubDetail>('GET', `hub/skill?${new URLSearchParams({ id: skill.skill_id, lang }).toString()}`).then(setDetail, (failure: unknown) => { setError(messageOf(failure)) })
+    callHost<HubDetail>('GET', `hub/skill?${new URLSearchParams({ id: skill.skill_id, lang, hub }).toString()}`).then(setDetail, (failure: unknown) => { setError(messageOf(failure)) })
   }
   /** Save the target site's URL and refresh the shared runtime view.
    * 保存目标站点地址并刷新共享运行状态。 */
-  const switchSite = (url: string) => {
-    if (url === hub) return
+  const switchSite = (url: string | null) => {
+    if (url === configured) return
     setSwitching(true)
     setError(undefined)
-    callHost('POST', 'settings', { ...live.settings, network: { ...live.settings.network, officialSkillHubBaseUrl: url } })
+    callHost('POST', 'hub/site', url)
       .catch((failure: unknown) => { setError(messageOf(failure)) })
       .finally(() => {
         setSwitching(false)
@@ -327,12 +339,15 @@ function Hub({ live, ready, installed, reload, view, t }: {
           <p className="vac-section-lead vac-mono">{hub}</p>
         </div>
         <span className="vac-inline" title={t('hub.siteHint')}>
+          <button type="button" className={configured === null ? 'vls-seg on' : 'vls-seg'}
+            disabled={switching || live.state.kind === 'installing' || live.state.kind === 'starting'}
+            onClick={() => { switchSite(null) }}>{t('hub.site.auto')}</button>
           {live.hubSites.map(item => (
             <button
               key={item.site}
               type="button"
-              className={site === item.site ? 'vls-seg on' : 'vls-seg'}
-              disabled={switching || !isInstalled(live.state) || live.state.kind === 'starting'}
+              className={configured === item.url ? 'vls-seg on' : 'vls-seg'}
+              disabled={switching || live.state.kind === 'installing' || live.state.kind === 'starting'}
               onClick={() => { switchSite(item.url) }}
             >
               {t(`hub.site.${item.site}` as Key)}

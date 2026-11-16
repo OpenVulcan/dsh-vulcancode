@@ -58,9 +58,11 @@
   },
   "dependencies": {
     "@deepseek-ai/dsh-atomic-write": "0.2.2-rc.1",
+    "@openvulcan/dsh-runtime-download": "workspace:*",
     "resedit": "3.1.0"
   },
   "devDependencies": {
+    "@openvulcan/dsh-vulcan-account": "workspace:*",
     "@deepseek-ai/cordis": "4.1.0",
     "@deepseek-ai/dsh-agent": "0.2.2-rc.1",
     "@deepseek-ai/dsh-app-boot": "0.2.2-rc.1",

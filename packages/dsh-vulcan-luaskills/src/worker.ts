@@ -13,6 +13,7 @@ import path from 'node:path'
 import type { ManagedKind, WorkerEvent, WorkerReply, WorkerRequest } from './protocol.js'
 import { inspectManaged, installManaged } from './managed-runtime.js'
 import { installPreparedUnixRuntime, openUnixLuaSymbols, preparedUnixTarget, UNIX_NATIVE_SMOKE } from './unix-runtime.js'
+import { withRuntimeDownloads, type RuntimeDownloadSource } from './runtime-downloads.js'
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- the SDK is loaded at run time and has no types here. */
 type Sdk = any
@@ -84,9 +85,9 @@ const handlers: Record<string, (params: any) => unknown> = {
   // 在选定的 LuaSkills 版本目录中检查或安装一个解释器。
   inspectManaged: (params: { runtimeRoot: string; luaRuntimeVersion: string }) =>
     inspectManaged(sdk, params.runtimeRoot, params.luaRuntimeVersion),
-  installManaged: (params: { runtimeRoot: string; luaRuntimeVersion: string; kind: ManagedKind }) =>
-    installManaged(sdk, params.runtimeRoot, params.luaRuntimeVersion, params.kind),
-  async installRuntime(params: { runtimeRoot: string; luaskillsVersion: string; luaRuntimeVersion: string }) {
+  installManaged: (params: { runtimeRoot: string; luaRuntimeVersion: string; kind: ManagedKind; source: RuntimeDownloadSource }) =>
+    withRuntimeDownloads(params.source, () => installManaged(sdk, params.runtimeRoot, params.luaRuntimeVersion, params.kind)),
+  async installRuntime(params: { runtimeRoot: string; luaskillsVersion: string; luaRuntimeVersion: string; source: RuntimeDownloadSource }) {
     // Unix archives are linked and signed when packing the plugin. No build tools run on the user's machine.
     // Unix 归档在打包插件时完成重链接和签名，用户设备无需运行构建工具。
     const target = preparedUnixTarget()
@@ -102,12 +103,10 @@ const handlers: Record<string, (params: any) => unknown> = {
     }
     const plan = sdk.buildRuntimeInstallManifest(options)
     const assets = new Map<string, string>(plan.assets.map((asset: { download_url: string; role: string }) => [asset.download_url, asset.role]))
-    const restore = countDownloads(assets)
-    try {
-      await sdk.installRuntimeAssets(options)
-    } finally {
-      restore()
-    }
+    await withRuntimeDownloads(params.source, async () => {
+      const restore = countDownloads(assets)
+      try { await sdk.installRuntimeAssets(options) } finally { restore() }
+    })
     return null
   },
   start(params: { runtimeRoot: string; poolConfig: object; hostOptions: object }) {
